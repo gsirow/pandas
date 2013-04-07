@@ -124,7 +124,7 @@ def uquery(sql, con=None, cur=None, retry=True, params=()):
     return result
 
 
-def read_frame(sql, con, index_col=None, coerce_float=True):
+def read_frame(sql, con, index_col=None, coerce_float=True, params=None):
     """
     Returns a DataFrame corresponding to the result set of the query
     string.
@@ -138,9 +138,11 @@ def read_frame(sql, con, index_col=None, coerce_float=True):
         SQL query to be executed
     con: DB connection object, optional
     index_col: string, optional
-        column name to use for the returned DataFrame object.
+        column name to use for the returned DataFrame object
+    params: tuple, optional
+        params for SQL query.
     """
-    cur = execute(sql, con)
+    cur = execute(sql, con, params=params)
     rows = _safe_fetch(cur)
     columns = [col_desc[0] for col_desc in cur.description]
 
