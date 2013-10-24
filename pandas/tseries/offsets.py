@@ -887,6 +887,7 @@ class LastWeekOfMonth(CacheableOffset, DateOffset):
 
 class DayOfMonth(CacheableOffset, DateOffset):
     """DateOffset of one month on a given day"""
+    _prefix = 'DOM'
     
     def __init__(self, n=1, **kwds):
         self.n = n
@@ -903,8 +904,6 @@ class DayOfMonth(CacheableOffset, DateOffset):
                 n = n + 1
         other = other + relativedelta(months=n, day=self.day)
         return Timestamp(other)
-        
-    _prefix = 'DOM'
     
     @classmethod
     def _from_name(cls, suffix=None):
