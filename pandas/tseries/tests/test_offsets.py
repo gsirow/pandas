@@ -12,7 +12,7 @@ from pandas.core.datetools import (
     bday, BDay, cday, CDay, BQuarterEnd, BMonthEnd, BYearEnd, MonthEnd,
     MonthBegin, BYearBegin, QuarterBegin, BQuarterBegin, BMonthBegin,
     DateOffset, Week, YearBegin, YearEnd, Hour, Minute, Second, Day, Micro,
-    Milli, Nano,
+    Milli, Nano, DayOfMonth,
     WeekOfMonth, format, ole2datetime, QuarterEnd, to_datetime, normalize_date,
     get_offset, get_offset_name, get_standard_freq)
 
@@ -677,6 +677,53 @@ class TestWeekOfMonth(unittest.TestCase):
         for week, weekday, date, expected in test_cases:
             offset = WeekOfMonth(week=week, weekday=weekday)
             self.assert_(offset.onOffset(date) == expected)
+
+class TestDayOfMonth(unittest.TestCase):
+    
+    def test_onOffset(self):
+        test_cases = [
+            (1, datetime(2011, 2, 7), False),
+            (7, datetime(2011, 2, 7), True),
+            (15, datetime(2011, 2, 15), True),
+            (15, datetime(2011, 2, 7), False)]
+        
+        for day, date, expected in test_cases:
+            offset = DayOfMonth(day=day)
+            self.assert_(offset.onOffset(date) == expected)
+    
+    def test_apply(self):
+        tests = []
+
+        tests.append((DayOfMonth(day=15),
+                      {datetime(2008, 1, 1): datetime(2008, 1, 15),
+                       datetime(2008, 1, 4): datetime(2008, 1, 15),
+                       datetime(2008, 1, 15): datetime(2008, 2, 15),
+                       datetime(2008, 1, 20): datetime(2008, 2, 15)}))
+
+        tests.append((2 * DayOfMonth(day=15),
+                      {datetime(2008, 1, 1): datetime(2008, 2, 15),
+                       datetime(2008, 1, 15): datetime(2008, 3, 15),
+                       datetime(2008, 1, 20): datetime(2008, 3, 15)}))
+
+        tests.append((-1 * DayOfMonth(day=15),
+                      {datetime(2008, 1, 1): datetime(2007, 12, 15),
+                       datetime(2008, 1, 15): datetime(2007, 12, 15),
+                       datetime(2008, 1, 20): datetime(2008, 1, 15)}))
+
+        tests.append((-2 * DayOfMonth(day=15),
+                      {datetime(2008, 1, 1): datetime(2007, 11, 15),
+                       datetime(2008, 1, 15): datetime(2008, 11, 15),
+                       datetime(2008, 1, 20): datetime(2007, 12, 15)}))
+
+        tests.append((DayOfMonth(0, day=15),
+                      {datetime(2008, 1, 1): datetime(2008, 1, 15),
+                       datetime(2008, 1, 4): datetime(2008, 1, 15),
+                       datetime(2008, 1, 15): datetime(2008, 1, 15),
+                       datetime(2008, 1, 20): datetime(2008, 1, 15)}))
+
+        for offset, cases in tests:
+            for base, expected in compat.iteritems(cases):
+                assertEq(offset, base, expected)
 
 class TestLastWeekOfMonth(unittest.TestCase):
     def test_constructor(self):

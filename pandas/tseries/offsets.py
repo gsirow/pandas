@@ -885,6 +885,34 @@ class LastWeekOfMonth(CacheableOffset, DateOffset):
         return cls(weekday=weekday)
 
 
+class DayOfMonth(CacheableOffset, DateOffset):
+    """DateOffset of one month on a given day"""
+    
+    def __init__(self, n=1, **kwds):
+        self.n = n
+        self.day = kwds['day']
+    
+    def onOffset(self, dt):
+        return dt == datetime(dt.year, dt.month, self.day)
+    
+    def apply(self, other):
+        n = self.n
+        if other.day < self.day:
+            other = other + relativedelta(months=-1, day=self.day)
+            if n <= 0:
+                n = n + 1
+        other = other + relativedelta(months=n, day=self.day)
+        return Timestamp(other)
+        
+    _prefix = 'DOM'
+    
+    @classmethod
+    def _from_name(cls, suffix=None):
+        if not suffix:
+            raise ValueError("Prefix %r requires a suffix." % (cls._prefix))
+        day = int(suffix[0])
+        return cls(day=day)
+
 class QuarterOffset(DateOffset):
     """Quarter representation - doesn't call super"""
 
@@ -1847,6 +1875,7 @@ prefix_mapping = dict((offset._prefix, offset) for offset in [
     Hour,                # 'H'
     Day,                 # 'D'
     WeekOfMonth,         # 'WOM'
+    DayOfMonth,          # 'DOM'
     FY5253,
     FY5253Quarter,    
 ])
