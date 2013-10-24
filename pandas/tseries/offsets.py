@@ -910,7 +910,7 @@ class DayOfMonth(CacheableOffset, DateOffset):
     def _from_name(cls, suffix=None):
         if not suffix:
             raise ValueError("Prefix %r requires a suffix." % (cls._prefix))
-        day = int(suffix[0])
+        day = int(suffix)
         return cls(day=day)
 
 class QuarterOffset(DateOffset):
