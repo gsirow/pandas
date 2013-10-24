@@ -88,7 +88,7 @@ See LICENSE for the license
 #define ERROR_NO_DATA                  23
 
 
-// #define VERBOSE
+/* #define VERBOSE */
 
 #if defined(VERBOSE)
 #define TRACE(X) printf X;
@@ -161,7 +161,7 @@ typedef struct parser_t {
 
     int *line_start;      // position in words for start of line
     int *line_fields;     // Number of fields in each line
-    int lines;            // Number of (good) lines observedb
+    int lines;            // Number of (good) lines observed
     int file_lines;       // Number of file lines observed (including bad or skipped)
     int lines_cap;        // Vector capacity
 
@@ -195,6 +195,8 @@ typedef struct parser_t {
     char thousands;
 
     int header; // Boolean: 1: has header, 0: no header
+    int header_start; // header row start
+    int header_end;   // header row end
 
     void *skipset;
     int skip_footer;
@@ -253,7 +255,7 @@ int64_t str_to_int64(const char *p_item, int64_t int_min,
                      int64_t int_max, int *error, char tsep);
 uint64_t str_to_uint64(const char *p_item, uint64_t uint_max, int *error);
 
-int P_INLINE to_double(char *item, double *p_value, char sci, char decimal);
+int P_INLINE to_double(char *item, double *p_value, char sci, char decimal, char tsep);
 int P_INLINE to_complex(char *item, double *p_real, double *p_imag, char sci, char decimal);
 int P_INLINE to_longlong(char *item, long long *p_value);
 int P_INLINE to_longlong_thousands(char *item, long long *p_value, char tsep);

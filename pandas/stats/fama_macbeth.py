@@ -1,4 +1,5 @@
-from pandas.util.py3compat import StringIO
+from pandas.core.base import StringMixin
+from pandas.compat import StringIO, range
 
 import numpy as np
 
@@ -26,7 +27,7 @@ def fama_macbeth(**kwargs):
     return klass(**kwargs)
 
 
-class FamaMacBeth(object):
+class FamaMacBeth(StringMixin):
     def __init__(self, y, x, intercept=True, nw_lags=None,
                  nw_lags_beta=None,
                  entity_effects=False, time_effects=False, x_effects=None,
@@ -114,7 +115,7 @@ class FamaMacBeth(object):
 
         return buffer.getvalue()
 
-    def __repr__(self):
+    def __unicode__(self):
         return self.summary
 
     @cache_readonly
@@ -172,7 +173,7 @@ class MovingFamaMacBeth(FamaMacBeth):
 
         start = self._window - 1
         betas = self._beta_raw
-        for i in xrange(start, self._T):
+        for i in range(start, self._T):
             if self._is_rolling:
                 begin = i - start
             else:
@@ -212,7 +213,7 @@ def _calc_t_stat(beta, nw_lags_beta):
     C = np.dot(B.T, B) / N
 
     if nw_lags_beta is not None:
-        for i in xrange(nw_lags_beta + 1):
+        for i in range(nw_lags_beta + 1):
 
             cov = np.dot(B[i:].T, B[:(N - i)]) / N
             weight = i / (nw_lags_beta + 1)

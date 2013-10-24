@@ -8,6 +8,7 @@
    from pandas import *
    randn = np.random.randn
    np.set_printoptions(precision=4, suppress=True)
+   from pandas.compat import lrange
 
 ==============================
  Essential Basic Functionality
@@ -92,7 +93,7 @@ Accelerated operations
 ----------------------
 
 Pandas has support for accelerating certain types of binary numerical and boolean operations using
-the ``numexpr`` library (starting in 0.11.0) and the ``bottleneck`` libraries. 
+the ``numexpr`` library (starting in 0.11.0) and the ``bottleneck`` libraries.
 
 These libraries are especially useful when dealing with large data sets, and provide large
 speedups. ``numexpr`` uses smart chunking, caching, and multiple cores. ``bottleneck`` is
@@ -110,7 +111,7 @@ Here is a sample (using 100 column x 100,000 row ``DataFrames``):
     ``df1 * df2``; 21.71;  36.63;  0.5928
     ``df1 + df2``; 22.04;  36.50;  0.6039
 
-You are highly encouraged to install both libraries. See the section 
+You are highly encouraged to install both libraries. See the section
 :ref:`Recommended Dependencies <install.recommended_dependencies>` for more installation info.
 
 .. _basics.binop:
@@ -195,8 +196,11 @@ replace NaN with some other value using ``fillna`` if you wish).
    df + df2
    df.add(df2, fill_value=0)
 
+.. _basics.compare:
+
 Flexible Comparisons
 ~~~~~~~~~~~~~~~~~~~~
+
 Starting in v0.8, pandas introduced binary comparison methods eq, ne, lt, gt,
 le, and ge to Series and DataFrame whose behavior is analogous to the binary
 arithmetic operations described above:
@@ -204,8 +208,70 @@ arithmetic operations described above:
 .. ipython:: python
 
    df.gt(df2)
-
    df2.ne(df)
+
+These operations produce a pandas object the same type as the left-hand-side input
+that if of dtype ``bool``. These ``boolean`` objects can be used in indexing operations,
+see :ref:`here<indexing.boolean>`
+
+.. _basics.reductions:
+
+Boolean Reductions
+~~~~~~~~~~~~~~~~~~
+
+You can apply the reductions: ``empty``, ``any()``, ``all()``, and ``bool()`` to provide a
+way to summarize a boolean result.
+
+.. ipython:: python
+
+   (df>0).all()
+   (df>0).any()
+
+You can reduce to a final boolean value.
+
+.. ipython:: python
+
+   (df>0).any().any()
+
+You can test if a pandas object is empty, via the ``empty`` property.
+
+.. ipython:: python
+
+   df.empty
+   DataFrame(columns=list('ABC')).empty
+
+To evaluate single-element pandas objects in a boolean context, use the method ``.bool()``:
+
+.. ipython:: python
+
+   Series([True]).bool()
+   Series([False]).bool()
+   DataFrame([[True]]).bool()
+   DataFrame([[False]]).bool()
+
+.. warning::
+
+   You might be tempted to do the following:
+
+   .. code-block:: python
+
+       >>>if df:
+            ...
+
+   Or
+
+   .. code-block:: python
+
+       >>> df and df2
+
+   These both will raise as you are trying to compare multiple values.
+
+   .. code-block:: python
+
+       ValueError: The truth value of an array is ambiguous. Use a.empty, a.any() or a.all().
+
+See :ref:`gotchas<gotchas.truth>` for a more detailed discussion.
+
 
 Combining overlapping data sets
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -401,6 +467,10 @@ value, ``idxmin`` and ``idxmax`` return the first matching index:
    df3
    df3['A'].idxmin()
 
+.. note::
+
+   ``idxmin`` and ``idxmax`` are called ``argmin`` and ``argmax`` in NumPy.
+
 .. _basics.discretization:
 
 Value counts (histogramming)
@@ -443,6 +513,12 @@ normally distributed data into equal-size quartiles like so:
    factor
    value_counts(factor)
 
+We can also pass infinite values to define the bins:
+.. ipython:: python
+
+   arr = np.random.randn(20)
+   factor = cut(arr, [-np.inf, 0, np.inf])
+   factor
 
 .. _basics.apply:
 
@@ -473,7 +549,7 @@ maximum value for each column occurred:
 
    tsdf = DataFrame(randn(1000, 3), columns=['A', 'B', 'C'],
                     index=date_range('1/1/2000', periods=1000))
-   tsdf.apply(lambda x: x.index[x.dropna().argmax()])
+   tsdf.apply(lambda x: x[x.idxmax()])
 
 You may also pass additional arguments and keyword arguments to the ``apply``
 method. For instance, consider the following function you would like to apply:
@@ -719,6 +795,8 @@ We illustrate these fill methods on a simple TimeSeries:
    ts2.reindex(ts.index, method='ffill')
    ts2.reindex(ts.index, method='bfill')
 
+Note these methods require that the indexes are **order increasing**.
+
 Note the same result could have been achieved using :ref:`fillna
 <missing_data.fillna>`:
 
@@ -726,9 +804,8 @@ Note the same result could have been achieved using :ref:`fillna
 
    ts2.reindex(ts.index).fillna(method='ffill')
 
-Note these methods generally assume that the indexes are **sorted**. They may
-be modified in the future to be a bit more flexible but as time series data is
-ordered most of the time anyway, this has not been a major priority.
+Note that ``reindex`` will raise a ValueError if the index is not
+monotonic. ``fillna`` will not make any checks on the order of the index.
 
 .. _basics.drop:
 
@@ -797,7 +874,7 @@ Thus, for example:
 .. ipython::
 
    In [0]: for col in df:
-      ...:     print col
+      ...:     print(col)
       ...:
 
 iteritems
@@ -815,8 +892,8 @@ For example:
 .. ipython::
 
    In [0]: for item, frame in wp.iteritems():
-      ...:     print item
-      ...:     print frame
+      ...:     print(item)
+      ...:     print(frame)
       ...:
 
 
@@ -832,20 +909,31 @@ containing the data in each row:
 .. ipython::
 
    In [0]: for row_index, row in df2.iterrows():
-      ...:     print '%s\n%s' % (row_index, row)
+      ...:     print('%s\n%s' % (row_index, row))
       ...:
-
 
 For instance, a contrived way to transpose the dataframe would be:
 
 .. ipython:: python
 
    df2 = DataFrame({'x': [1, 2, 3], 'y': [4, 5, 6]})
-   print df2
-   print df2.T
+   print(df2)
+   print(df2.T)
 
    df2_t = DataFrame(dict((idx,values) for idx, values in df2.iterrows()))
-   print df2_t
+   print(df2_t)
+
+.. note::
+
+   ``iterrows`` does **not** preserve dtypes across the rows (dtypes are
+   preserved across columns for DataFrames). For example,
+
+    .. ipython:: python
+
+      df_iter = DataFrame([[1, 1.0]], columns=['x', 'y'])
+      row = next(df_iter.iterrows())[1]
+      print(row['x'].dtype)
+      print(df_iter['x'].dtype)
 
 itertuples
 ~~~~~~~~~~
@@ -858,7 +946,8 @@ For instance,
 
 .. ipython:: python
 
-   for r in df2.itertuples(): print r
+   for r in df2.itertuples():
+       print(r)
 
 .. _basics.string_methods:
 
@@ -901,6 +990,42 @@ Methods like ``replace`` and ``findall`` take regular expressions, too:
    s3
    s3.str.replace('^.a|dog', 'XX-XX ', case=False)
 
+The method ``match`` returns the groups in a regular expression in one tuple.
+Starting in pandas version 0.13.0, the method ``extract`` is available to
+accomplish this more conveniently.
+
+Extracting a regular expression with one group returns a Series of strings.
+
+.. ipython:: python
+
+   Series(['a1', 'b2', 'c3']).str.extract('[ab](\d)')
+
+Elements that do not match return ``NaN``. Extracting a regular expression
+with more than one group returns a DataFrame with one column per group.
+
+.. ipython:: python
+
+   Series(['a1', 'b2', 'c3']).str.extract('([ab])(\d)')
+
+Elements that do not match return a row of ``NaN``s.
+Thus, a Series of messy strings can be "converted" into a
+like-indexed Series or DataFrame of cleaned-up or more useful strings,
+without necessitating ``get()`` to access tuples or ``re.match`` objects.
+
+Named groups like
+
+.. ipython:: python
+
+   Series(['a1', 'b2', 'c3']).str.match('(?P<letter>[ab])(?P<digit>\d)')
+
+and optional groups like
+
+.. ipython:: python
+
+   Series(['a1', 'b2', '3']).str.match('(?P<letter>[ab])?(?P<digit>\d)')
+
+can also be used.
+
 Methods like ``contains``, ``startswith``, and ``endswith`` takes an extra
 ``na`` arguement so missing values can be considered True or False:
 
@@ -929,6 +1054,7 @@ Methods like ``contains``, ``startswith``, and ``endswith`` takes an extra
     ``endswidth``,Equivalent to ``str.endswith(pat)`` for each element
     ``findall``,Compute list of all occurrences of pattern/regex for each string
     ``match``,"Call ``re.match`` on each element, returning matched groups as list"
+    ``extract``,"Call ``re.match`` on each element, as ``match`` does, but return matched groups as strings for convenience."
     ``len``,Compute string lengths
     ``strip``,Equivalent to ``str.strip``
     ``rstrip``,Equivalent to ``str.rstrip``
@@ -1011,16 +1137,16 @@ dtypes
 ------
 
 The main types stored in pandas objects are ``float``, ``int``, ``bool``, ``datetime64[ns]``, ``timedelta[ns]``,
-and ``object``. In addition these dtypes have item sizes, e.g. ``int64`` and ``int32``. A convenient ``dtypes`` 
+and ``object``. In addition these dtypes have item sizes, e.g. ``int64`` and ``int32``. A convenient ``dtypes``
 attribute for DataFrames returns a Series with the data type of each column.
 
 .. ipython:: python
 
-   dft = DataFrame(dict( A = np.random.rand(3), 
-                         B = 1, 
-                         C = 'foo', 
-                         D = Timestamp('20010102'), 
-                         E = Series([1.0]*3).astype('float32'), 
+   dft = DataFrame(dict( A = np.random.rand(3),
+                         B = 1,
+                         C = 'foo',
+                         D = Timestamp('20010102'),
+                         E = Series([1.0]*3).astype('float32'),
 			 F = False,
 			 G = Series([1]*3,dtype='int8')))
    dft
@@ -1032,7 +1158,7 @@ On a ``Series`` use the ``dtype`` method.
 
    dft['A'].dtype
 
-If a pandas object contains data multiple dtypes *IN A SINGLE COLUMN*, the dtype of the 
+If a pandas object contains data multiple dtypes *IN A SINGLE COLUMN*, the dtype of the
 column will be chosen to accommodate all of the data types (``object`` is the most
 general).
 
@@ -1051,9 +1177,9 @@ each type in a ``DataFrame``:
 
    dft.get_dtype_counts()
 
-Numeric dtypes will propagate and can coexist in DataFrames (starting in v0.11.0). 
-If a dtype is passed (either directly via the ``dtype`` keyword, a passed ``ndarray``, 
-or a passed ``Series``, then it will be preserved in DataFrame operations. Furthermore, 
+Numeric dtypes will propagate and can coexist in DataFrames (starting in v0.11.0).
+If a dtype is passed (either directly via the ``dtype`` keyword, a passed ``ndarray``,
+or a passed ``Series``, then it will be preserved in DataFrame operations. Furthermore,
 different numeric dtypes will **NOT** be combined. The following example will give you a taste.
 
 .. ipython:: python
@@ -1061,8 +1187,8 @@ different numeric dtypes will **NOT** be combined. The following example will gi
    df1 = DataFrame(randn(8, 1), columns = ['A'], dtype = 'float32')
    df1
    df1.dtypes
-   df2 = DataFrame(dict( A = Series(randn(8),dtype='float16'), 
-                         B = Series(randn(8)), 
+   df2 = DataFrame(dict( A = Series(randn(8),dtype='float16'),
+                         B = Series(randn(8)),
                          C = Series(np.array(randn(8),dtype='uint8')) ))
    df2
    df2.dtypes
@@ -1070,27 +1196,27 @@ different numeric dtypes will **NOT** be combined. The following example will gi
 defaults
 ~~~~~~~~
 
-By default integer types are ``int64`` and float types are ``float64``, 
+By default integer types are ``int64`` and float types are ``float64``,
 *REGARDLESS* of platform (32-bit or 64-bit). The following will all result in ``int64`` dtypes.
 
 .. ipython:: python
 
-    DataFrame([1,2],columns=['a']).dtypes
-    DataFrame({'a' : [1,2] }).dtypes
-    DataFrame({'a' : 1 }, index=range(2)).dtypes
+   DataFrame([1, 2], columns=['a']).dtypes
+   DataFrame({'a': [1, 2]}).dtypes
+   DataFrame({'a': 1 }, index=list(range(2))).dtypes
 
 Numpy, however will choose *platform-dependent* types when creating arrays.
 The following **WILL** result in ``int32`` on 32-bit platform.
 
 .. ipython:: python
 
-    frame = DataFrame(np.array([1,2]))
+   frame = DataFrame(np.array([1, 2]))
 
 
 upcasting
 ~~~~~~~~~
 
-Types can potentially be *upcasted* when combined with other types, meaning they are promoted 
+Types can potentially be *upcasted* when combined with other types, meaning they are promoted
 from the current type (say ``int`` to ``float``)
 
 .. ipython:: python
@@ -1099,8 +1225,8 @@ from the current type (say ``int`` to ``float``)
    df3
    df3.dtypes
 
-The ``values`` attribute on a DataFrame return the *lower-common-denominator* of the dtypes, meaning 
-the dtype that can accomodate **ALL** of the types in the resulting homogenous dtyped numpy array. This can 
+The ``values`` attribute on a DataFrame return the *lower-common-denominator* of the dtypes, meaning
+the dtype that can accomodate **ALL** of the types in the resulting homogenous dtyped numpy array. This can
 force some *upcasting*.
 
 .. ipython:: python
@@ -1116,7 +1242,7 @@ You can use the ``astype`` method to explicity convert dtypes from one to anothe
 even if the dtype was unchanged (pass ``copy=False`` to change this behavior). In addition, they will raise an
 exception if the astype operation is invalid.
 
-Upcasting is always according to the **numpy** rules. If two different dtypes are involved in an operation, 
+Upcasting is always according to the **numpy** rules. If two different dtypes are involved in an operation,
 then the more *general* one will be used as the result of the operation.
 
 .. ipython:: python
@@ -1132,7 +1258,7 @@ object conversion
 
 ``convert_objects`` is a method to try to force conversion of types from the ``object`` dtype to other types.
 To force conversion of specific types that are *number like*, e.g. could be a string that represents a number,
-pass ``convert_numeric=True``. This will force strings and numbers alike to be numbers if possible, otherwise 
+pass ``convert_numeric=True``. This will force strings and numbers alike to be numbers if possible, otherwise
 they will be set to ``np.nan``.
 
 .. ipython:: python
@@ -1146,20 +1272,20 @@ they will be set to ``np.nan``.
    df3['E'] = df3['E'].astype('int32')
    df3.dtypes
 
-To force conversion to ``datetime64[ns]``, pass ``convert_dates='coerce'``. 
+To force conversion to ``datetime64[ns]``, pass ``convert_dates='coerce'``.
 This will convert any datetimelike object to dates, forcing other values to ``NaT``.
 This might be useful if you are reading in data which is mostly dates,
 but occasionally has non-dates intermixed and you want to represent as missing.
 
 .. ipython:: python
 
-   s = Series([datetime(2001,1,1,0,0), 
-              'foo', 1.0, 1, Timestamp('20010104'), 
+   s = Series([datetime(2001,1,1,0,0),
+              'foo', 1.0, 1, Timestamp('20010104'),
               '20010105'],dtype='O')
    s
    s.convert_objects(convert_dates='coerce')
 
-In addition, ``convert_objects`` will attempt the *soft* conversion of any *object* dtypes, meaning that if all 
+In addition, ``convert_objects`` will attempt the *soft* conversion of any *object* dtypes, meaning that if all
 the objects in a Series are of the same type, the Series will have that dtype.
 
 gotchas
@@ -1192,48 +1318,17 @@ While float dtypes are unchanged.
    casted
    casted.dtypes
 
-.. _basics.serialize:
-
-Pickling and serialization
---------------------------
-
-All pandas objects are equipped with ``save`` methods which use Python's
-``cPickle`` module to save data structures to disk using the pickle format.
-
-.. ipython:: python
-
-   df
-   df.save('foo.pickle')
-
-The ``load`` function in the ``pandas`` namespace can be used to load any
-pickled pandas object (or any other pickled object) from file:
-
-
-.. ipython:: python
-
-   load('foo.pickle')
-
-There is also a ``save`` function which takes any object as its first argument:
-
-.. ipython:: python
-
-   save(df, 'foo.pickle')
-   load('foo.pickle')
-
-.. ipython:: python
-   :suppress:
-
-   import os
-   os.remove('foo.pickle')
 
 Working with package options
 ----------------------------
 
 .. _basics.working_with_options:
+.. versionadded:: 0.10.1
 
-Introduced in 0.10.0, pandas supports a new system for working with options.
+Pandas has an options system that let's you customize some aspects of it's behaviour,
+display-related options being those the user is must likely to adjust.
+
 Options have a full "dotted-style", case-insensitive name (e.g. ``display.max_rows``),
-
 You can get/set options directly as attributes of the top-level ``options`` attribute:
 
 .. ipython:: python
@@ -1244,7 +1339,7 @@ You can get/set options directly as attributes of the top-level ``options`` attr
    pd.options.display.max_rows
 
 
-There is also an API composed of 4 relavent functions, available directly from the ``pandas``
+There is also an API composed of 4 relevant functions, available directly from the ``pandas``
 namespace, and they are:
 
 - ``get_option`` / ``set_option`` - get/set the value of a single option.
@@ -1265,7 +1360,7 @@ and so passing in a substring will work - as long as it is unambiguous :
    get_option("display.max_rows")
 
 
-The following will **not work** because it matches multiple option names, e.g.``display.max_colwidth``, ``display.max_rows``, ``display.max_columns``:
+The following will **not work** because it matches multiple option names, e.g. ``display.max_colwidth``, ``display.max_rows``, ``display.max_columns``:
 
 .. ipython:: python
    :okexcept:
@@ -1276,11 +1371,17 @@ The following will **not work** because it matches multiple option names, e.g.``
        print(e)
 
 
-**Note:** Using this form of convenient shorthand may make your code break if new options with similar names are added in future versions.
+**Note:** Using this form of shorthand may cause your code to break if new options with similar names are added in future versions.
 
 
 You can get a list of available options and their descriptions with ``describe_option``. When called
 with no argument ``describe_option`` will print out the descriptions for all available options.
+
+.. ipython:: python
+   :suppress:
+
+   reset_option("all")
+
 
 .. ipython:: python
 
@@ -1311,11 +1412,11 @@ All options also have a default value, and you can use the ``reset_option`` to d
    get_option("display.max_rows")
 
 
-It's also possible to reset multiple options at once:
+It's also possible to reset multiple options at once (using a regex):
 
 .. ipython:: python
 
-   reset_option("^display\.")
+   reset_option("^display")
 
 
 
@@ -1323,11 +1424,6 @@ Console Output Formatting
 -------------------------
 
 .. _basics.console_output:
-
-**Note:** ``set_printoptions``/ ``reset_printoptions``  are now deprecated (but functioning),
-and both, as well as ``set_eng_float_format``, use the options API behind the scenes.
-The corresponding options now live under "print.XYZ", and you can set them directly with
-``get/set_option``.
 
 Use the ``set_eng_float_format`` function in the ``pandas.core.common`` module
 to alter the floating-point formatting of pandas objects to produce a particular
@@ -1345,7 +1441,7 @@ For instance:
 .. ipython:: python
    :suppress:
 
-   reset_printoptions()
+   reset_option('^display\.')
 
 
 The ``set_printoptions`` function has a number of options for controlling how

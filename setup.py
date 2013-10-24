@@ -11,23 +11,6 @@ import sys
 import shutil
 import warnings
 
-try:
-    basedir = os.path.dirname(__file__)
-    dotfile = os.path.join(basedir,".build_cache_dir")
-    BUILD_CACHE_DIR = ""
-    if os.path.exists(dotfile):
-        BUILD_CACHE_DIR = open(dotfile).readline().strip()
-    BUILD_CACHE_DIR = os.environ.get('BUILD_CACHE_DIR',BUILD_CACHE_DIR)
-
-    if os.path.isdir(BUILD_CACHE_DIR):
-        print("--------------------------------------------------------")
-        print("BUILD CACHE ACTIVATED. be careful, this is experimental.")
-        print("--------------------------------------------------------")
-    else:
-        BUILD_CACHE_DIR = None
-except:
-        BUILD_CACHE_DIR = None
-
 # may need to work around setuptools bug by providing a fake Pyrex
 try:
     import Cython
@@ -51,29 +34,30 @@ except ImportError:
     _have_setuptools = False
 
 setuptools_kwargs = {}
+min_numpy_ver = '1.6'
 if sys.version_info[0] >= 3:
 
-    min_numpy_ver = 1.6
     if sys.version_info[1] >= 3:  # 3.3 needs numpy 1.7+
         min_numpy_ver = "1.7.0b2"
 
-    setuptools_kwargs = {'use_2to3': True,
+    setuptools_kwargs = {
                          'zip_safe': False,
                          'install_requires': ['python-dateutil >= 2',
-                                              'pytz',
+                                              'pytz >= 2011k',
                                               'numpy >= %s' % min_numpy_ver],
-                         'use_2to3_exclude_fixers': ['lib2to3.fixes.fix_next',
-                                                     ],
+                         'setup_requires': ['numpy >= %s' % min_numpy_ver],
                          }
     if not _have_setuptools:
         sys.exit("need setuptools/distribute for Py3k"
                  "\n$ pip install distribute")
 
 else:
+    min_numpy_ver = '1.6.1'
     setuptools_kwargs = {
         'install_requires': ['python-dateutil',
-                             'pytz',
-                             'numpy >= 1.6.1'],
+                            'pytz >= 2011k',
+                             'numpy >= %s' % min_numpy_ver],
+        'setup_requires': ['numpy >= %s' % min_numpy_ver],
         'zip_safe': False,
     }
 
@@ -99,7 +83,7 @@ try:
 except ImportError:
     cython = False
 
-from os.path import splitext, basename, join as pjoin
+from os.path import join as pjoin
 
 
 class build_ext(_build_ext):
@@ -179,7 +163,7 @@ the ideal tool for all of these tasks.
 
 Note
 ----
-Windows binaries built against NumPy 1.6.1
+Windows binaries built against NumPy 1.7.1
 """
 
 DISTNAME = 'pandas'
@@ -196,12 +180,16 @@ CLASSIFIERS = [
     'Programming Language :: Python',
     'Programming Language :: Python :: 2',
     'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 2.6',
+    'Programming Language :: Python :: 2.7',
+    'Programming Language :: Python :: 3.2',
+    'Programming Language :: Python :: 3.3',
     'Programming Language :: Cython',
     'Topic :: Scientific/Engineering',
 ]
 
 MAJOR = 0
-MINOR = 11
+MINOR = 12
 MICRO = 0
 ISRELEASED = False
 VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
@@ -213,19 +201,20 @@ if not ISRELEASED:
     try:
         import subprocess
         try:
-            pipe = subprocess.Popen(["git", "rev-parse", "--short", "HEAD"],
+            pipe = subprocess.Popen(["git", "describe", "HEAD"],
                                     stdout=subprocess.PIPE).stdout
         except OSError:
             # msysgit compatibility
             pipe = subprocess.Popen(
-                ["git.cmd", "rev-parse", "--short", "HEAD"],
+                ["git.cmd", "describe", "HEAD"],
                 stdout=subprocess.PIPE).stdout
         rev = pipe.read().strip()
         # makes distutils blow up on Python 2.7
         if sys.version_info[0] >= 3:
             rev = rev.decode('ascii')
 
-        FULLVERSION += "-%s" % rev
+        FULLVERSION = rev.lstrip('v')
+
     except:
         warnings.warn("WARNING: Couldn't get git revision")
 else:
@@ -261,12 +250,23 @@ class CleanCommand(Command):
                                'np_datetime_strings.c',
                                'period.c',
                                'tokenizer.c',
-                               'io.c']
+                               'io.c',
+                               'ujson.c',
+                               'objToJSON.c',
+                               'JSONtoObj.c',
+                               'ultrajsonenc.c',
+                               'ultrajsondec.c',
+                               ]
 
         for root, dirs, files in list(os.walk('pandas')):
             for f in files:
                 if f in self._clean_exclude:
                     continue
+
+                # XXX
+                if 'ujson' in f:
+                    continue
+
                 if os.path.splitext(f)[-1] in ('.pyc', '.so', '.o',
                                                '.pyo',
                                                '.pyd', '.c', '.orig'):
@@ -303,8 +303,9 @@ class CheckSDist(sdist):
                  'pandas/tslib.pyx',
                  'pandas/index.pyx',
                  'pandas/algos.pyx',
-                 'pandas/src/parser.pyx',
-                 'pandas/src/sparse.pyx']
+                 'pandas/parser.pyx',
+                 'pandas/src/sparse.pyx',
+                 'pandas/src/testing.pyx']
 
     def initialize_options(self):
         sdist.initialize_options(self)
@@ -346,153 +347,6 @@ class CheckingBuildExt(build_ext):
         build_ext.build_extensions(self)
 
 
-class CompilationCacheMixin(object):
-    def __init__(self, *args, **kwds):
-        cache_dir = kwds.pop("cache_dir", BUILD_CACHE_DIR)
-        self.cache_dir = cache_dir
-        if not os.path.isdir(cache_dir):
-            raise Exception("Error: path to Cache directory (%s) is not a dir" % cache_dir)
-
-    def _copy_from_cache(self, hash, target):
-        src = os.path.join(self.cache_dir, hash)
-        if os.path.exists(src):
-            # print("Cache HIT: asked to copy file %s in %s"  %
-            # (src,os.path.abspath(target)))
-            s = "."
-            for d in target.split(os.path.sep)[:-1]:
-                s = os.path.join(s, d)
-                if not os.path.exists(s):
-                    os.mkdir(s)
-            shutil.copyfile(src, target)
-
-            return True
-
-        return False
-
-    def _put_to_cache(self, hash, src):
-        target = os.path.join(self.cache_dir, hash)
-        # print( "Cache miss: asked to copy file from %s to %s" % (src,target))
-        s = "."
-        for d in target.split(os.path.sep)[:-1]:
-            s = os.path.join(s, d)
-            if not os.path.exists(s):
-                os.mkdir(s)
-        shutil.copyfile(src, target)
-
-    def _hash_obj(self, obj):
-        """
-        you should override this method to provide a sensible
-        implementation of hashing functions for your intended objects
-        """
-        try:
-            return hash(obj)
-        except:
-            raise NotImplementedError("You must override this method")
-
-class CompilationCacheExtMixin(CompilationCacheMixin):
-    def __init__(self, *args, **kwds):
-        CompilationCacheMixin.__init__(self, *args, **kwds)
-
-    def _hash_file(self, fname):
-        from hashlib import sha1
-        try:
-            hash = sha1()
-            hash.update(self.build_lib.encode('utf-8'))
-            try:
-                if sys.version_info[0] >= 3:
-                    import io
-                    f = io.open(fname, "rb")
-                else:
-                    f = open(fname)
-
-                first_line = f.readline()
-                # ignore cython generation timestamp header
-                if "Generated by Cython" not in first_line.decode('utf-8'):
-                    hash.update(first_line)
-                hash.update(f.read())
-                return hash.hexdigest()
-
-            except:
-                raise
-                return None
-            finally:
-                f.close()
-
-        except IOError:
-            return None
-
-    def _hash_obj(self, ext):
-        from hashlib import sha1
-
-        sources = ext.sources
-        if (sources is None or
-            (not hasattr(sources, '__iter__')) or
-            isinstance(sources, str) or
-                sys.version[0] == 2 and isinstance(sources, unicode)):  # argh
-            return False
-
-        sources = list(sources) + ext.depends
-        hash = sha1()
-        try:
-            for fname in sources:
-                fhash = self._hash_file(fname)
-                if fhash:
-                    hash.update(fhash.encode('utf-8'))
-        except:
-            return None
-
-        return hash.hexdigest()
-
-
-class CachingBuildExt(build_ext, CompilationCacheExtMixin):
-    def __init__(self, *args, **kwds):
-        CompilationCacheExtMixin.__init__(self, *args, **kwds)
-        kwds.pop("cache_dir", None)
-        build_ext.__init__(self, *args, **kwds)
-
-    def build_extension(self, ext, *args, **kwds):
-        ext_path = self.get_ext_fullpath(ext.name)
-        build_path = os.path.join(self.build_lib, os.path.basename(ext_path))
-
-        hash = self._hash_obj(ext)
-        if hash and self._copy_from_cache(hash, ext_path):
-            return
-
-        build_ext.build_extension(self, ext, *args, **kwds)
-
-        hash = self._hash_obj(ext)
-        if os.path.exists(build_path):
-            self._put_to_cache(hash, build_path)  # build_ext
-        if os.path.exists(ext_path):
-            self._put_to_cache(hash, ext_path)  # develop
-
-    def cython_sources(self, sources, extension):
-        import re
-        cplus = self.cython_cplus or getattr(extension, 'cython_cplus', 0) or \
-            (extension.language and extension.language.lower() == 'c++')
-        target_ext = '.c'
-        if cplus:
-            target_ext = '.cpp'
-
-        for i, s in enumerate(sources):
-            if not re.search("\.(pyx|pxi|pxd)$", s):
-                continue
-            ext_dir = os.path.dirname(s)
-            ext_basename = re.sub("\.[^\.]+$", "", os.path.basename(s))
-            ext_basename += target_ext
-            target = os.path.join(ext_dir, ext_basename)
-            hash = self._hash_file(s)
-            sources[i] = target
-            if hash and self._copy_from_cache(hash, target):
-                continue
-            build_ext.cython_sources(self, [s], extension)
-            self._put_to_cache(hash, target)
-
-        sources = [x for x in sources if x.startswith("pandas")]
-
-        return sources
-
-
 class CythonCommand(build_ext):
     """Custom distutils command subclassed from Cython.Distutils.build_ext
     to compile pyx->c, and stop there. All this does is override the
@@ -522,8 +376,6 @@ cmdclass = {'clean': CleanCommand,
 if cython:
     suffix = '.pyx'
     cmdclass['build_ext'] = CheckingBuildExt
-    if BUILD_CACHE_DIR:  # use the cache
-        cmdclass['build_ext'] = CachingBuildExt
     cmdclass['cython'] = CythonCommand
 else:
     suffix = '.c'
@@ -578,6 +430,12 @@ ext_data = dict(
                        'pandas/src/datetime/np_datetime_strings.c']},
     algos={'pyxfile': 'algos',
            'depends': [srcpath('generated', suffix='.pyx')]},
+    parser=dict(pyxfile='parser',
+                depends=['pandas/src/parser/tokenizer.h',
+                         'pandas/src/parser/io.h',
+                         'pandas/src/numpy_helper.h'],
+                sources=['pandas/src/parser/tokenizer.c',
+                         'pandas/src/parser/io.c'])
 )
 
 extensions = []
@@ -605,28 +463,31 @@ sparse_ext = Extension('pandas._sparse',
                        include_dirs=[],
                        libraries=libraries)
 
+extensions.extend([sparse_ext])
 
-parser_ext = Extension('pandas._parser',
-                       depends=['pandas/src/parser/tokenizer.h',
-                                'pandas/src/parser/io.h',
-                                'pandas/src/numpy_helper.h'],
-                       sources=[srcpath('parser', suffix=suffix),
-                                'pandas/src/parser/tokenizer.c',
-                                'pandas/src/parser/io.c',
-                                ],
-                       include_dirs=common_include)
+testing_ext = Extension('pandas._testing',
+                       sources=[srcpath('testing', suffix=suffix)],
+                       include_dirs=[],
+                       libraries=libraries)
 
-sandbox_ext = Extension('pandas._sandbox',
-                        sources=[srcpath('sandbox', suffix=suffix)],
-                        include_dirs=common_include)
+extensions.extend([testing_ext])
 
+#----------------------------------------------------------------------
+# msgpack stuff here
 
-cppsandbox_ext = Extension('pandas._cppsandbox',
-                           language='c++',
-                           sources=[srcpath('cppsandbox', suffix=suffix)],
-                           include_dirs=[])
+if sys.byteorder == 'big':
+    macros = [('__BIG_ENDIAN__', '1')]
+else:
+    macros = [('__LITTLE_ENDIAN__', '1')]
 
-extensions.extend([sparse_ext, parser_ext])
+msgpack_ext = Extension('pandas.msgpack',
+                        sources = [srcpath('msgpack',
+                                           suffix=suffix, subdir='')],
+                        language='c++',
+                        include_dirs=common_include,
+                        define_macros=macros)
+
+extensions.append(msgpack_ext)
 
 # if not ISRELEASED:
 #     extensions.extend([sandbox_ext])
@@ -638,16 +499,40 @@ if suffix == '.pyx' and 'setuptools' in sys.modules:
             root, _ = os.path.splitext(ext.sources[0])
             ext.sources[0] = root + suffix
 
+ujson_ext = Extension('pandas.json',
+                      depends=['pandas/src/ujson/lib/ultrajson.h',
+                               'pandas/src/numpy_helper.h'],
+                      sources=['pandas/src/ujson/python/ujson.c',
+                               'pandas/src/ujson/python/objToJSON.c',
+                               'pandas/src/ujson/python/JSONtoObj.c',
+                               'pandas/src/ujson/lib/ultrajsonenc.c',
+                               'pandas/src/ujson/lib/ultrajsondec.c',
+                               'pandas/src/datetime/np_datetime.c',
+                               'pandas/src/datetime/np_datetime_strings.c'],
+                      include_dirs=['pandas/src/ujson/python',
+                                    'pandas/src/ujson/lib',
+                                    'pandas/src/datetime'] + common_include,
+                      extra_compile_args=['-D_GNU_SOURCE'])
+
+
+extensions.append(ujson_ext)
+
 
 if _have_setuptools:
     setuptools_kwargs["test_suite"] = "nose.collector"
 
 write_version_py()
+
+# The build cache system does string matching below this point.
+# if you change something, be careful.
+
 setup(name=DISTNAME,
       version=FULLVERSION,
       maintainer=AUTHOR,
       packages=['pandas',
                 'pandas.compat',
+                'pandas.computation',
+                'pandas.computation.tests',
                 'pandas.core',
                 'pandas.io',
                 'pandas.rpy',
@@ -657,19 +542,28 @@ setup(name=DISTNAME,
                 'pandas.stats',
                 'pandas.util',
                 'pandas.tests',
+                'pandas.tests.test_msgpack',
                 'pandas.tools',
                 'pandas.tools.tests',
                 'pandas.tseries',
                 'pandas.tseries.tests',
                 'pandas.io.tests',
+                'pandas.io.tests.test_json',
                 'pandas.stats.tests',
                 ],
-      package_data={'pandas.io': ['tests/*.h5',
-                                  'tests/*.csv',
-                                  'tests/*.txt',
-                                  'tests/*.xls',
-                                  'tests/*.xlsx',
-                                  'tests/*.table'],
+      package_data={'pandas.io': ['tests/data/legacy_hdf/*.h5',
+                                  'tests/data/legacy_pickle/0.10.1/*.pickle',
+                                  'tests/data/legacy_pickle/0.11.0/*.pickle',
+                                  'tests/data/legacy_pickle/0.12.0/*.pickle',
+                                  'tests/data/legacy_pickle/0.13.0/*.pickle',
+                                  'tests/data/*.csv',
+                                  'tests/data/*.dta',
+                                  'tests/data/*.txt',
+                                  'tests/data/*.xls',
+                                  'tests/data/*.xlsx',
+                                  'tests/data/*.table',
+                                  'tests/data/*.html',
+                                  'tests/test_json/data/*.json'],
                     'pandas.tools': ['tests/*.csv'],
                     'pandas.tests': ['data/*.pickle',
                                      'data/*.csv'],

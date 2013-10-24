@@ -3,9 +3,11 @@ import nose
 import unittest
 
 import numpy as np
+from pandas.compat import zip
 
 from pandas import DataFrame, Series, unique
 import pandas.util.testing as tm
+from pandas.util.testing import assertRaisesRegexp
 import pandas.core.common as com
 
 from pandas.core.algorithms import quantile
@@ -112,6 +114,22 @@ class TestCut(unittest.TestCase):
         ex_result = np.where(com.isnull(arr), np.nan, result)
         tm.assert_almost_equal(result, ex_result)
 
+    def test_inf_handling(self):
+        data = np.arange(6)
+        data_ser = Series(data)
+
+        result = cut(data, [-np.inf, 2, 4, np.inf])
+        result_ser = cut(data_ser, [-np.inf, 2, 4, np.inf])
+        
+        ex_levels = ['(-inf, 2]', '(2, 4]', '(4, inf]']
+        
+        np.testing.assert_array_equal(result.levels, ex_levels)
+        np.testing.assert_array_equal(result_ser.levels, ex_levels)
+        self.assertEquals(result[5], '(4, inf]')
+        self.assertEquals(result[0], '(-inf, 2]')
+        self.assertEquals(result_ser[5], '(4, inf]')
+        self.assertEquals(result_ser[0], '(-inf, 2]')
+
     def test_qcut(self):
         arr = np.random.randn(1000)
 
@@ -136,7 +154,7 @@ class TestCut(unittest.TestCase):
         self.assert_(factor.equals(expected))
 
     def test_qcut_all_bins_same(self):
-        self.assertRaises(Exception, qcut, [0,0,0,0,0,0,0,0,0,0], 3)
+        assertRaisesRegexp(ValueError, "edges.*unique", qcut, [0,0,0,0,0,0,0,0,0,0], 3)
 
     def test_cut_out_of_bounds(self):
         arr = np.random.randn(100)

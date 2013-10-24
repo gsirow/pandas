@@ -14,6 +14,7 @@ from cpython cimport (PyDict_New, PyDict_GetItem, PyDict_SetItem,
                       Py_INCREF, PyTuple_SET_ITEM,
                       PyList_Check, PyFloat_Check,
                       PyString_Check,
+		      PyBytes_Check,
                       PyTuple_SetItem,
                       PyTuple_New,
                       PyObject_SetAttrString)
@@ -416,7 +417,6 @@ def dicts_to_array(list dicts, list columns):
 
     return result
 
-
 def fast_zip(list ndarrays):
     '''
     For zipping multiple ndarrays into an ndarray of tuples
@@ -672,6 +672,9 @@ def scalar_binop(ndarray[object] values, object val, object op):
         object x
 
     result = np.empty(n, dtype=object)
+    if util._checknull(val):
+        result.fill(val)
+        return result
 
     for i in range(n):
         x = values[i]
@@ -714,11 +717,30 @@ def vec_binop(ndarray[object] left, ndarray[object] right, object op):
 def astype_intsafe(ndarray[object] arr, new_dtype):
     cdef:
         Py_ssize_t i, n = len(arr)
+        object v
+        bint is_datelike
         ndarray result
+
+    # on 32-bit, 1.6.2 numpy M8[ns] is a subdtype of integer, which is weird
+    is_datelike = new_dtype in ['M8[ns]','m8[ns]']
 
     result = np.empty(n, dtype=new_dtype)
     for i in range(n):
-        util.set_value_at(result, i, arr[i])
+        v = arr[i]
+        if is_datelike and checknull(v):
+           result[i] = NPY_NAT
+        else:
+           util.set_value_at(result, i, v)
+
+    return result
+
+cpdef ndarray[object] astype_str(ndarray arr):
+    cdef:
+        Py_ssize_t i, n = arr.size
+        ndarray[object] result = np.empty(n, dtype=object)
+
+    for i in range(n):
+        util.set_value_at(result, i, str(arr[i]))
 
     return result
 
@@ -763,7 +785,7 @@ def max_len_string_array(ndarray[object, ndim=1] arr):
     m = 0
     for i from 0 <= i < length:
         v = arr[i]
-        if PyString_Check(v):
+        if PyString_Check(v) or PyBytes_Check(v):
             l = len(v)
 
             if l > m:
@@ -773,11 +795,10 @@ def max_len_string_array(ndarray[object, ndim=1] arr):
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def array_replace_from_nan_rep(ndarray[object, ndim=1] arr, object nan_rep, object replace = None):
+def string_array_replace_from_nan_rep(ndarray[object, ndim=1] arr, object nan_rep, object replace = None):
     """ replace the values in the array with replacement if they are nan_rep; return the same array """
 
-    cdef int length = arr.shape[0]
-    cdef int i = 0
+    cdef int length = arr.shape[0], i = 0
     if replace is None:
         replace = np.nan
 
@@ -789,7 +810,6 @@ def array_replace_from_nan_rep(ndarray[object, ndim=1] arr, object nan_rep, obje
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-
 def write_csv_rows(list data, list data_index, int nlevels, list cols, object writer):
 
     cdef int N, j, i, ncols
@@ -833,145 +853,6 @@ def write_csv_rows(list data, list data_index, int nlevels, list cols, object wr
 
     if  j >= 0 and (j < N-1 or (j % N) != N-1 ):
         writer.writerows(rows[:((j+1) % N)])
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-def create_hdf_rows_2d(ndarray indexer0, 
-                       ndarray[np.uint8_t, ndim=1] mask,
-                       ndarray[np.uint8_t, ndim=1] searchable,	 
-                       list values):	 
-    """ return a list of objects ready to be converted to rec-array format """
-
-    cdef:
-        int i, b, n_indexer0, n_blocks, tup_size
-        list l
-        object tup, val, v
-
-    n_indexer0 = indexer0.shape[0]
-    n_blocks   = len(values)
-    tup_size   = n_blocks+1
-    l = []
-
-    for i from 0 <= i < n_indexer0:
-
-        if not mask[i]:
-                
-            tup = PyTuple_New(tup_size)
-            val  = indexer0[i]
-            PyTuple_SET_ITEM(tup, 0, val)
-            Py_INCREF(val)
-
-            for b from 0 <= b < n_blocks:
-
-                v = values[b][:, i]
-                if searchable[b]:
-                    v = v[0]
-                PyTuple_SET_ITEM(tup, b+1, v)
-                Py_INCREF(v)
-
-            l.append(tup)
-
-    return l
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-def create_hdf_rows_3d(ndarray indexer0, ndarray indexer1,
-                       ndarray[np.uint8_t, ndim=2] mask, 
-                       ndarray[np.uint8_t, ndim=1] searchable,	 
-                       list values):
-    """ return a list of objects ready to be converted to rec-array format """
-
-    cdef:
-        int i, j, b, n_indexer0, n_indexer1, n_blocks, tup_size
-        list l
-        object tup, val, v
-
-    n_indexer0 = indexer0.shape[0]
-    n_indexer1 = indexer1.shape[0]
-    n_blocks   = len(values)
-    tup_size   = n_blocks+2
-    l = []
-    for i from 0 <= i < n_indexer0:
-
-        for j from 0 <= j < n_indexer1:
-
-            if not mask[i, j]:
-
-                tup = PyTuple_New(tup_size)
-
-                val  = indexer0[i]
-                PyTuple_SET_ITEM(tup, 0, val)
-                Py_INCREF(val)
-
-                val  = indexer1[j]
-                PyTuple_SET_ITEM(tup, 1, val)
-                Py_INCREF(val)
-
-                for b from 0 <= b < n_blocks:
-
-                    v   = values[b][:, i, j]
-                    if searchable[b]:
-                        v = v[0]
-                    PyTuple_SET_ITEM(tup, b+2, v)
-                    Py_INCREF(v)
-
-                l.append(tup)
-
-    return l
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-def create_hdf_rows_4d(ndarray indexer0, ndarray indexer1, ndarray indexer2,
-                       ndarray[np.uint8_t, ndim=3] mask, 
-                       ndarray[np.uint8_t, ndim=1] searchable,	 
-                       list values):
-    """ return a list of objects ready to be converted to rec-array format """
-
-    cdef:
-        int i, j, k, b, n_indexer0, n_indexer1, n_indexer2, n_blocks, tup_size
-        list l
-        object tup, val, v
-
-    n_indexer0 = indexer0.shape[0]
-    n_indexer1 = indexer1.shape[0]
-    n_indexer2 = indexer2.shape[0]
-    n_blocks   = len(values)
-    tup_size   = n_blocks+3
-    l = []
-    for i from 0 <= i < n_indexer0:
-
-        for j from 0 <= j < n_indexer1:
-
-            for k from 0 <= k < n_indexer2:
-
-                if not mask[i, j, k]:
-
-                    tup = PyTuple_New(tup_size)
-
-                    val  = indexer0[i]
-                    PyTuple_SET_ITEM(tup, 0, val)
-                    Py_INCREF(val)
-
-                    val  = indexer1[j]
-                    PyTuple_SET_ITEM(tup, 1, val)
-                    Py_INCREF(val)
-
-                    val  = indexer2[k]
-                    PyTuple_SET_ITEM(tup, 2, val)
-                    Py_INCREF(val)
-
-                    for b from 0 <= b < n_blocks:
-
-                        v   = values[b][:, i, j, k]
-                        if searchable[b]:
-                            v = v[0]
-                        PyTuple_SET_ITEM(tup, b+3, v)
-                        Py_INCREF(v)
-
-                    l.append(tup)
-
-    return l
 
 #-------------------------------------------------------------------------------
 # Groupby-related functions

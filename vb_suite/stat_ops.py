@@ -43,6 +43,35 @@ stat_ops_level_series_sum_multiple = \
     Benchmark("df[1].sum(level=[0, 1])", setup, repeat=1,
               start_date=datetime(2011, 11, 15))
 
+sum_setup = common_setup + """
+df = DataFrame(np.random.randn(100000, 4))
+dfi = DataFrame(np.random.randint(1000, size=df.shape))
+"""
+
+stat_ops_frame_sum_int_axis_0 = \
+    Benchmark("dfi.sum()", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_sum_float_axis_0 = \
+    Benchmark("df.sum()", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_mean_int_axis_0 = \
+    Benchmark("dfi.mean()", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_mean_float_axis_0 = \
+    Benchmark("df.mean()", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_sum_int_axis_1 = \
+    Benchmark("dfi.sum(1)", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_sum_float_axis_1 = \
+    Benchmark("df.sum(1)", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_mean_int_axis_1 = \
+    Benchmark("dfi.mean(1)", sum_setup, start_date=datetime(2013, 7, 25))
+
+stat_ops_frame_mean_float_axis_1 = \
+    Benchmark("df.mean(1)", sum_setup, start_date=datetime(2013, 7, 25))
+
 #----------------------------------------------------------------------
 # rank
 
@@ -82,3 +111,12 @@ arr = np.random.randn(100000)
 
 stats_rolling_mean = Benchmark('rolling_mean(arr, 100)', setup,
                                start_date=datetime(2011, 6, 1))
+
+# spearman correlation
+
+setup = common_setup + """
+df = DataFrame(np.random.randn(1000, 30))
+"""
+
+stats_corr_spearman = Benchmark("df.corr(method='spearman')", setup,
+                                start_date=datetime(2011, 12, 4))

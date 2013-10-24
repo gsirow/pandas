@@ -1,5 +1,4 @@
 # pylint: disable-msg=W0612,E1101,W0141
-from pandas.util.py3compat import StringIO
 import nose
 import unittest
 
@@ -11,10 +10,12 @@ from pandas import Panel, DataFrame, Series, notnull, isnull
 
 from pandas.util.testing import (assert_almost_equal,
                                  assert_series_equal,
-                                 assert_frame_equal)
+                                 assert_frame_equal,
+                                 assertRaisesRegexp)
 import pandas.core.common as com
 import pandas.util.testing as tm
-from pandas.util.compat import product as cart_product
+from pandas.compat import (range, lrange, StringIO, lzip, u, cPickle,
+                                product as cart_product, zip)
 import pandas as pd
 
 import pandas.index as _index
@@ -43,7 +44,7 @@ class TestMultiLevel(unittest.TestCase):
         # create test series object
         arrays = [['bar', 'bar', 'baz', 'baz', 'qux', 'qux', 'foo', 'foo'],
                   ['one', 'two', 'one', 'two', 'one', 'two', 'one', 'two']]
-        tuples = zip(*arrays)
+        tuples = lzip(*arrays)
         index = MultiIndex.from_tuples(tuples)
         s = Series(randn(8), index=index)
         s[3] = np.NaN
@@ -55,9 +56,11 @@ class TestMultiLevel(unittest.TestCase):
                                      lambda x: x.day]).sum()
 
         # use Int64Index, to make sure things work
-        self.ymd.index.levels = [lev.astype('i8')
-                                 for lev in self.ymd.index.levels]
-        self.ymd.index.names = ['year', 'month', 'day']
+        self.ymd.index.set_levels([lev.astype('i8')
+                                 for lev in self.ymd.index.levels],
+                                 inplace=True)
+        self.ymd.index.set_names(['year', 'month', 'day'],
+                                 inplace=True)
 
     def test_append(self):
         a, b = self.frame[:5], self.frame[5:]
@@ -72,26 +75,26 @@ class TestMultiLevel(unittest.TestCase):
         multi = DataFrame(np.random.randn(4, 4),
                           index=[np.array(['a', 'a', 'b', 'b']),
                                  np.array(['x', 'y', 'x', 'y'])])
-        self.assert_(isinstance(multi.index, MultiIndex))
+        tm.assert_isinstance(multi.index, MultiIndex)
         self.assert_(not isinstance(multi.columns, MultiIndex))
 
         multi = DataFrame(np.random.randn(4, 4),
                           columns=[['a', 'a', 'b', 'b'],
                                    ['x', 'y', 'x', 'y']])
-        self.assert_(isinstance(multi.columns, MultiIndex))
+        tm.assert_isinstance(multi.columns, MultiIndex)
 
     def test_series_constructor(self):
         multi = Series(1., index=[np.array(['a', 'a', 'b', 'b']),
                                   np.array(['x', 'y', 'x', 'y'])])
-        self.assert_(isinstance(multi.index, MultiIndex))
+        tm.assert_isinstance(multi.index, MultiIndex)
 
         multi = Series(1., index=[['a', 'a', 'b', 'b'],
                                   ['x', 'y', 'x', 'y']])
-        self.assert_(isinstance(multi.index, MultiIndex))
+        tm.assert_isinstance(multi.index, MultiIndex)
 
-        multi = Series(range(4), index=[['a', 'a', 'b', 'b'],
+        multi = Series(lrange(4), index=[['a', 'a', 'b', 'b'],
                                         ['x', 'y', 'x', 'y']])
-        self.assert_(isinstance(multi.index, MultiIndex))
+        tm.assert_isinstance(multi.index, MultiIndex)
 
     def test_reindex_level(self):
         # axis=0
@@ -136,7 +139,6 @@ class TestMultiLevel(unittest.TestCase):
         _check_op('div')
 
     def test_pickle(self):
-        import cPickle
 
         def _test_roundtrip(frame):
             pickled = cPickle.dumps(frame)
@@ -269,7 +271,8 @@ class TestMultiLevel(unittest.TestCase):
         np.putmask(values[:-1], values[:-1] < 0, 2)
         assert_almost_equal(df.values, values)
 
-        self.assertRaises(Exception, df.__setitem__, df * 0, 2)
+        with assertRaisesRegexp(TypeError, 'boolean values only'):
+            df[df * 0] = 2
 
     def test_frame_getitem_setitem_slice(self):
         # getitem
@@ -344,13 +347,13 @@ class TestMultiLevel(unittest.TestCase):
         # it broadcasts
         df['B', '1'] = [1, 2, 3]
         df['A'] = df['B', '1']
-        assert_almost_equal(df['A', '1'], df['B', '1'])
-        assert_almost_equal(df['A', '2'], df['B', '1'])
+        assert_series_equal(df['A', '1'], df['B', '1'])
+        assert_series_equal(df['A', '2'], df['B', '1'])
 
     def test_getitem_tuple_plus_slice(self):
         # GH #671
-        df = DataFrame({'a': range(10),
-                        'b': range(10),
+        df = DataFrame({'a': lrange(10),
+                        'b': lrange(10),
                         'c': np.random.randn(10),
                         'd': np.random.randn(10)})
 
@@ -426,10 +429,12 @@ class TestMultiLevel(unittest.TestCase):
         expected = df[1:2]
         expected.index = expected.index.droplevel(2)
         assert_frame_equal(result, expected)
+        # can't produce a view of a multiindex with a level without copying
+        with assertRaisesRegexp(ValueError, 'Cannot retrieve view'):
+            self.frame.xs('two', level='second', copy=False)
 
     def test_xs_level_multiple(self):
         from pandas import read_table
-        from StringIO import StringIO
         text = """                      A       B       C       D        E
 one two three   four
 a   b   10.0032 5    -0.5109 -2.3358 -0.4645  0.05076  0.3640
@@ -441,9 +446,11 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         result = df.xs(('a', 4), level=['one', 'four'])
         expected = df.xs('a').xs(4, level='four')
         assert_frame_equal(result, expected)
+        with assertRaisesRegexp(ValueError, 'Cannot retrieve view'):
+            df.xs(('a', 4), level=['one', 'four'], copy=False)
 
         # GH2107
-        dates = range(20111201, 20111205)
+        dates = lrange(20111201, 20111205)
         ids = 'abcde'
         idx = MultiIndex.from_tuples([x for x in cart_product(dates, ids)])
         idx.names = ['date', 'secid']
@@ -454,7 +461,6 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
 
     def test_xs_level0(self):
         from pandas import read_table
-        from StringIO import StringIO
         text = """                      A       B       C       D        E
 one two three   four
 a   b   10.0032 5    -0.5109 -2.3358 -0.4645  0.05076  0.3640
@@ -577,7 +583,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         s = dft['foo', 'two']
         dft['foo', 'two'] = s > s.median()
         assert_series_equal(dft['foo', 'two'], s > s.median())
-        self.assert_(isinstance(dft._data.blocks[1].items, MultiIndex))
+        tm.assert_isinstance(dft._data.blocks[1].items, MultiIndex)
 
         reindexed = dft.reindex(columns=[('foo', 'two')])
         assert_series_equal(reindexed['foo', 'two'], s > s.median())
@@ -588,7 +594,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
 
         # with integer labels
         df = self.frame.copy()
-        df.columns = range(3)
+        df.columns = lrange(3)
         df.ix[('bar', 'two'), 1] = 7
         self.assertEquals(df.ix[('bar', 'two'), 1], 7)
 
@@ -621,14 +627,14 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
     def test_sortlevel(self):
         df = self.frame.copy()
         df.index = np.arange(len(df))
-        self.assertRaises(Exception, df.sortlevel, 0)
+        assertRaisesRegexp(TypeError, 'hierarchical index', df.sortlevel, 0)
 
         # axis=1
 
         # series
         a_sorted = self.frame['A'].sortlevel(0)
-        self.assertRaises(Exception,
-                          self.frame.reset_index()['A'].sortlevel)
+        with assertRaisesRegexp(TypeError, 'hierarchical index'):
+            self.frame.reset_index()['A'].sortlevel()
 
         # preserve names
         self.assertEquals(a_sorted.index.names, self.frame.index.names)
@@ -673,12 +679,12 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         self.assertEquals(len(deleveled.columns), len(self.ymd.columns))
 
         deleveled = self.series.reset_index()
-        self.assert_(isinstance(deleveled, DataFrame))
+        tm.assert_isinstance(deleveled, DataFrame)
         self.assert_(
             len(deleveled.columns) == len(self.series.index.levels) + 1)
 
         deleveled = self.series.reset_index(drop=True)
-        self.assert_(isinstance(deleveled, Series))
+        tm.assert_isinstance(deleveled, Series)
 
     def test_sortlevel_by_name(self):
         self.frame.index.names = ['first', 'second']
@@ -723,7 +729,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
 
         # can't call with level on regular DataFrame
         df = tm.makeTimeDataFrame()
-        self.assertRaises(Exception, df.count, level=0)
+        assertRaisesRegexp(TypeError, 'hierarchical', df.count, level=0)
 
         self.frame['D'] = 'foo'
         result = self.frame.count(level=0, numeric_only=True)
@@ -948,6 +954,19 @@ Thur,Lunch,Yes,51.51,17"""
         xp.columns.name = 'Params'
         assert_frame_equal(rs, xp)
 
+    def test_stack_dropna(self):
+        # GH #3997
+        df = pd.DataFrame({'A': ['a1', 'a2'],
+                           'B': ['b1', 'b2'],
+                           'C': [1, 1]})
+        df = df.set_index(['A', 'B'])
+
+        stacked = df.unstack().stack(dropna=False)
+        self.assertTrue(len(stacked) > len(stacked.dropna()))
+
+        stacked = df.unstack().stack(dropna=True)
+        assert_frame_equal(stacked, stacked.dropna())
+
     def test_unstack_multiple_hierarchical(self):
         df = DataFrame(index=[[0, 0, 0, 0, 1, 1, 1, 1],
                               [0, 0, 1, 1, 0, 0, 1, 1],
@@ -1073,13 +1092,16 @@ Thur,Lunch,Yes,51.51,17"""
         expected = self.ymd.T.swaplevel(0, 1, axis=1).swaplevel(1, 2, axis=1)
         assert_frame_equal(result, expected)
 
-        self.assertRaises(Exception, self.ymd.index.reorder_levels,
-                          [1, 2, 3])
+        with assertRaisesRegexp(TypeError, 'hierarchical axis'):
+            self.ymd.reorder_levels([1, 2], axis=1)
+
+        with assertRaisesRegexp(IndexError, 'Too many levels'):
+            self.ymd.index.reorder_levels([1, 2, 3])
 
     def test_insert_index(self):
         df = self.ymd[:5].T
         df[2000, 1, 10] = df[2000, 1, 7]
-        self.assert_(isinstance(df.columns, MultiIndex))
+        tm.assert_isinstance(df.columns, MultiIndex)
         self.assert_((df[2000, 1, 10] == df[2000, 1, 7]).all())
 
     def test_alignment(self):
@@ -1154,7 +1176,7 @@ Thur,Lunch,Yes,51.51,17"""
     def test_series_getitem_not_sorted(self):
         arrays = [['bar', 'bar', 'baz', 'baz', 'qux', 'qux', 'foo', 'foo'],
                  ['one', 'two', 'one', 'two', 'one', 'two', 'one', 'two']]
-        tuples = zip(*arrays)
+        tuples = lzip(*arrays)
         index = MultiIndex.from_tuples(tuples)
         s = Series(randn(8), index=index)
 
@@ -1173,11 +1195,11 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = frame.count(level='b')
         expect = self.frame.count(level=1)
-        assert_frame_equal(result, expect)
+        assert_frame_equal(result, expect, check_names=False)
 
         result = frame.count(level='a')
         expect = self.frame.count(level=0)
-        assert_frame_equal(result, expect)
+        assert_frame_equal(result, expect, check_names=False)
 
         series = self.series.copy()
         series.index.names = ['a', 'b']
@@ -1190,15 +1212,15 @@ Thur,Lunch,Yes,51.51,17"""
         expect = self.series.count(level=0)
         assert_series_equal(result, expect)
 
-        self.assertRaises(Exception, series.count, 'x')
-        self.assertRaises(Exception, frame.count, level='x')
+        self.assertRaises(KeyError, series.count, 'x')
+        self.assertRaises(KeyError, frame.count, level='x')
 
     AGG_FUNCTIONS = ['sum', 'prod', 'min', 'max', 'median', 'mean', 'skew',
                      'mad', 'std', 'var']
 
     def test_series_group_min_max(self):
         for op, level, skipna in cart_product(self.AGG_FUNCTIONS,
-                                              range(2),
+                                              lrange(2),
                                               [False, True]):
             grouped = self.series.groupby(level=level)
             aggf = lambda x: getattr(x, op)(skipna=skipna)
@@ -1212,7 +1234,7 @@ Thur,Lunch,Yes,51.51,17"""
         self.frame.ix[7, [0, 1]] = np.nan
 
         for op, level, axis, skipna in cart_product(self.AGG_FUNCTIONS,
-                                                    range(2), range(2),
+                                                    lrange(2), lrange(2),
                                                     [False, True]):
             if axis == 0:
                 frame = self.frame
@@ -1388,14 +1410,16 @@ Thur,Lunch,Yes,51.51,17"""
         self.assertRaises(KeyError, self.frame.ix.__getitem__,
                           (('bar', 'three'), 'B'))
 
-        self.assertRaises(KeyError, self.frame.ix.__setitem__,
-                          (('bar', 'three'), 'B'), 0)
+
+        # in theory should be inserting in a sorted space????
+        self.frame.ix[('bar','three'),'B'] = 0
+        self.assert_(self.frame.sortlevel().ix[('bar','three'),'B'] == 0)
 
     #----------------------------------------------------------------------
     # AMBIGUOUS CASES!
 
     def test_partial_ix_missing(self):
-        raise nose.SkipTest
+        raise nose.SkipTest("skipping for now")
 
         result = self.ymd.ix[2000, 0]
         expected = self.ymd.ix[2000]['A']
@@ -1406,6 +1430,7 @@ Thur,Lunch,Yes,51.51,17"""
         # self.ymd.ix[2000, 0] = 0
         # self.assert_((self.ymd.ix[2000]['A'] == 0).all())
 
+        # Pretty sure the second (and maybe even the first) is already wrong.
         self.assertRaises(Exception, self.ymd.ix.__getitem__, (2000, 6))
         self.assertRaises(Exception, self.ymd.ix.__getitem__, (2000, 6), 0)
 
@@ -1483,8 +1508,7 @@ Thur,Lunch,Yes,51.51,17"""
                   ['', 'OD', 'OD', 'result1', 'result2', 'result1'],
                   ['', 'wx', 'wy', '', '', '']]
 
-        tuples = zip(*arrays)
-        tuples.sort()
+        tuples = sorted(zip(*arrays))
         index = MultiIndex.from_tuples(tuples)
         df = DataFrame(randn(4, 6), columns=index)
 
@@ -1503,8 +1527,7 @@ Thur,Lunch,Yes,51.51,17"""
                   ['', 'OD', 'OD', 'result1', 'result2', 'result1'],
                   ['', 'wx', 'wy', '', '', '']]
 
-        tuples = zip(*arrays)
-        tuples.sort()
+        tuples = sorted(zip(*arrays))
         index = MultiIndex.from_tuples(tuples)
         df = DataFrame(randn(4, 6), columns=index)
 
@@ -1519,8 +1542,7 @@ Thur,Lunch,Yes,51.51,17"""
                   ['', 'OD', 'OD', 'result1', 'result2', 'result1'],
                   ['', 'wx', 'wy', '', '', '']]
 
-        tuples = zip(*arrays)
-        tuples.sort()
+        tuples = sorted(zip(*arrays))
         index = MultiIndex.from_tuples(tuples)
         df = DataFrame(randn(4, 6), columns=index)
 
@@ -1571,8 +1593,7 @@ Thur,Lunch,Yes,51.51,17"""
                   ['', 'OD', 'OD', 'result1', 'result2', 'result1'],
                   ['', 'wx', 'wy', '', '', '']]
 
-        tuples = zip(*arrays)
-        tuples.sort()
+        tuples = sorted(zip(*arrays))
         index = MultiIndex.from_tuples(tuples)
         df = DataFrame(randn(4, 6), columns=index)
 
@@ -1661,10 +1682,10 @@ Thur,Lunch,Yes,51.51,17"""
         df = DataFrame(np.random.randn(6, 3), index=index)
 
         result = df.drop([(0, 2)])
-        self.assert_(result.index.names == ['one', 'two'])
+        self.assert_(result.index.names == ('one', 'two'))
 
     def test_unicode_repr_issues(self):
-        levels = [Index([u'a/\u03c3', u'b/\u03c3', u'c/\u03c3']),
+        levels = [Index([u('a/\u03c3'), u('b/\u03c3'), u('c/\u03c3')]),
                   Index([0, 1])]
         labels = [np.arange(3).repeat(2), np.tile(np.arange(2), 3)]
         index = MultiIndex(levels=levels, labels=labels)
@@ -1676,9 +1697,9 @@ Thur,Lunch,Yes,51.51,17"""
 
     def test_unicode_repr_level_names(self):
         index = MultiIndex.from_tuples([(0, 0), (1, 1)],
-                                       names=[u'\u0394', 'i1'])
+                                       names=[u('\u0394'), 'i1'])
 
-        s = Series(range(2), index=index)
+        s = Series(lrange(2), index=index)
         df = DataFrame(np.random.randn(2, 4), index=index)
         repr(s)
         repr(df)
@@ -1734,7 +1755,7 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = frame.ix[:, 1]
         exp = frame.icol(1)
-        self.assert_(isinstance(result, Series))
+        tm.assert_isinstance(result, Series)
         assert_series_equal(result, exp)
 
     def test_nonunique_assignment_1750(self):
@@ -1763,14 +1784,6 @@ Thur,Lunch,Yes,51.51,17"""
         self.assertEquals(s[("a", 7)], 7)
 
         _index._SIZE_CUTOFF = old_cutoff
-
-    def test_xs_mixed_no_copy(self):
-        index = MultiIndex.from_arrays([['a', 'a', 'b', 'b'], [1, 2, 1, 2]],
-                                       names=['first', 'second'])
-        data = DataFrame(np.random.rand(len(index)), index=index,
-                         columns=['A'])
-
-        self.assertRaises(Exception, data.xs, 2, level=1, copy=False)
 
     def test_multiindex_na_repr(self):
         # only an issue with long columns
@@ -1821,6 +1834,29 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = s.groupby(s.index).first()
         self.assertEquals(len(result), 3)
+
+    def test_duplicate_mi(self):
+        # GH 4516
+        df = DataFrame([['foo','bar',1.0,1],['foo','bar',2.0,2],['bah','bam',3.0,3],
+                        ['bah','bam',4.0,4],['foo','bar',5.0,5],['bah','bam',6.0,6]],
+                       columns=list('ABCD'))
+        df = df.set_index(['A','B'])
+        df = df.sortlevel(0)
+        expected = DataFrame([['foo','bar',1.0,1],['foo','bar',2.0,2],['foo','bar',5.0,5]],
+                             columns=list('ABCD')).set_index(['A','B'])
+        result = df.loc[('foo','bar')]
+        assert_frame_equal(result,expected)
+
+    def test_multiindex_set_index(self):
+        # segfault in #3308
+        d = {'t1': [2, 2.5, 3], 't2': [4, 5, 6]}
+        df = DataFrame(d)
+        tuples = [(0, 1), (0, 2), (1, 2)]
+        df['tuples'] = tuples
+
+        index = MultiIndex.from_tuples(df['tuples'])
+        # it works!
+        df.set_index(index)
 
 if __name__ == '__main__':
 

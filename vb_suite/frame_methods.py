@@ -40,8 +40,8 @@ frame_fillna_inplace = Benchmark('df.fillna(0, inplace=True)', setup,
 # reindex both axes
 
 setup = common_setup + """
-df = DataFrame(randn(1000, 1000))
-idx = np.arange(400, 700)
+df = DataFrame(randn(10000, 10000))
+idx = np.arange(4000, 7000)
 """
 
 frame_reindex_axis0 = Benchmark('df.reindex(idx)', setup)
@@ -83,7 +83,9 @@ frame_boolean_row_select = Benchmark('df[bool_arr]', setup,
 # iteritems (monitor no-copying behaviour)
 
 setup = common_setup + """
-df = DataFrame(randn(10000, 100))
+df = DataFrame(randn(10000, 1000))
+df2 = DataFrame(randn(3000,1),columns=['A'])
+df3 = DataFrame(randn(3000,1))
 
 def f():
     if hasattr(df, '_item_cache'):
@@ -94,6 +96,15 @@ def f():
 def g():
     for name, col in df.iteritems():
         pass
+
+def h():
+    for i in xrange(10000):
+        df2['A']
+
+def j():
+    for i in xrange(10000):
+        df3[0]
+
 """
 
 # as far back as the earliest test currently in the suite
@@ -102,6 +113,12 @@ frame_iteritems = Benchmark('f()', setup,
 
 frame_iteritems_cached = Benchmark('g()', setup,
                                    start_date=datetime(2010, 6, 1))
+
+frame_getitem_single_column = Benchmark('h()', setup,
+                                        start_date=datetime(2010, 6, 1))
+
+frame_getitem_single_column2 = Benchmark('j()', setup,
+                                         start_date=datetime(2010, 6, 1))
 
 #----------------------------------------------------------------------
 # to_string
@@ -125,8 +142,19 @@ def f(K=500):
         df[i] = new_col
 """
 
-frame_insert_500_columns = Benchmark('f()', setup,
-                                     start_date=datetime(2011, 1, 1))
+frame_insert_500_columns_end = Benchmark('f()', setup, start_date=datetime(2011, 1, 1))
+
+setup = common_setup + """
+N = 1000
+
+def f(K=100):
+    df = DataFrame(index=range(N))
+    new_col = np.random.randn(N)
+    for i in range(K):
+        df.insert(0,i,new_col)
+"""
+
+frame_insert_100_columns_begin = Benchmark('f()', setup, start_date=datetime(2011, 1, 1))
 
 #----------------------------------------------------------------------
 # strings methods, #2602
@@ -153,5 +181,42 @@ setup = common_setup + """
 df = pandas.DataFrame(np.random.randn(10,10000))
 """
 
-frame_wide_repr = Benchmark('repr(df)', setup,
-                                       start_date=datetime(2012, 8, 1))
+frame_repr_wide = Benchmark('repr(df)', setup,
+                            start_date=datetime(2012, 8, 1))
+
+##
+setup = common_setup + """
+df = pandas.DataFrame(np.random.randn(10000, 10))
+"""
+
+frame_repr_tall = Benchmark('repr(df)', setup,
+                            start_date=datetime(2012, 8, 1))
+
+##
+setup = common_setup + """
+df = DataFrame(randn(100000, 1))
+"""
+
+frame_xs_row = Benchmark('df.xs(50000)', setup)
+
+##
+setup = common_setup + """
+df = DataFrame(randn(1,100000))
+"""
+
+frame_xs_col = Benchmark('df.xs(50000,axis = 1)', setup)
+
+## masking
+setup = common_setup + """
+data = np.random.randn(1000, 500)
+df = DataFrame(data)
+df = df.where(df > 0) # create nans
+bools = df > 0
+mask = isnull(df)
+"""
+
+mask_bools = Benchmark('bools.mask(mask)', setup,
+                         start_date=datetime(2013,1,1))
+
+mask_floats  = Benchmark('bools.astype(float).mask(mask)', setup,
+                         start_date=datetime(2013,1,1))

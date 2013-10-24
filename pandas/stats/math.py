@@ -3,6 +3,7 @@
 
 from __future__ import division
 
+from pandas.compat import range
 import numpy as np
 import numpy.linalg as linalg
 
@@ -50,13 +51,14 @@ def newey_west(m, max_lags, nobs, df, nw_overlap=False):
 
     Parameters
     ----------
-    m: (N x K)
-    max_lags: int
-    nobs: int
+    m : (N x K)
+    max_lags : int
+    nobs : int
         Number of observations in model
-    df: int
+    df : int
         Degrees of freedom in explanatory variables
-    nw_overlap: boolean
+    nw_overlap : boolean, default False
+        Assume data is overlapping
 
     Returns
     -------
@@ -69,7 +71,7 @@ def newey_west(m, max_lags, nobs, df, nw_overlap=False):
     Covariance Matrix, Econometrica, vol. 55(3), 703-708
     """
     Xeps = np.dot(m.T, m)
-    for lag in xrange(1, max_lags + 1):
+    for lag in range(1, max_lags + 1):
         auto_cov = np.dot(m[:-lag].T, m[lag:])
         weight = lag / (max_lags + 1)
         if nw_overlap:
@@ -82,9 +84,9 @@ def newey_west(m, max_lags, nobs, df, nw_overlap=False):
 
     if nw_overlap and not is_psd(Xeps):
         new_max_lags = int(np.ceil(max_lags * 1.5))
-#         print ('nw_overlap is True and newey_west generated a non positive '
-#                'semidefinite matrix, so using newey_west with max_lags of %d.'
-#                % new_max_lags)
+#         print('nw_overlap is True and newey_west generated a non positive '
+#               'semidefinite matrix, so using newey_west with max_lags of %d.'
+#               % new_max_lags)
         return newey_west(m, new_max_lags, nobs, df)
 
     return Xeps

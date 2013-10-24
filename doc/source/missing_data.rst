@@ -14,6 +14,7 @@ pandas.
    import numpy as np; randn = np.random.randn; randint =np.random.randint
    from pandas import *
    import matplotlib.pyplot as plt
+   from pandas.compat import lrange
 
 .. note::
 
@@ -22,6 +23,8 @@ pandas.
     approach of, for example, :mod:`scikits.timeseries`. We are hopeful that
     NumPy will soon be able to provide a native NA type solution (similar to R)
     performant enough to be used in pandas.
+
+See the :ref:`cookbook<cookbook.missing_data>` for some advanced strategies
 
 Missing data basics
 -------------------
@@ -202,6 +205,41 @@ To remind you, these are the available filling methods:
 With time series data, using pad/ffill is extremely common so that the "last
 known value" is available at every time point.
 
+The ``ffill()`` function is equivalent to ``fillna(method='ffill')``
+and ``bfill()`` is equivalent to ``fillna(method='bfill')``
+
+.. _missing_data.PandasObject:
+
+Filling with a PandasObject
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 0.12
+
+You can also fillna using a dict or Series that is alignable. The labels of the dict or index of the Series
+must match the columns of the frame you wish to fill. The
+use case of this is to fill a DataFrame with the mean of that column.
+
+.. ipython:: python
+
+        dff = DataFrame(np.random.randn(10,3),columns=list('ABC'))
+        dff.iloc[3:5,0] = np.nan
+        dff.iloc[4:6,1] = np.nan
+        dff.iloc[5:8,2] = np.nan
+        dff
+
+        dff.fillna(dff.mean())
+        dff.fillna(dff.mean()['B':'C'])
+
+.. versionadded:: 0.13
+
+Same result as above, but is aligning the 'fill' value which is
+a Series in this case.
+
+.. ipython:: python
+
+        dff.where(notnull(dff),dff.mean(),axis='columns')
+
+
 .. _missing_data.dropna:
 
 Dropping axis labels with missing data: dropna
@@ -233,8 +271,13 @@ examined :ref:`in the API <api.dataframe.missing>`.
 Interpolation
 ~~~~~~~~~~~~~
 
-A linear **interpolate** method has been implemented on Series. The default
-interpolation assumes equally spaced points.
+.. versionadded:: 0.13.0
+
+  :meth:`~pandas.DataFrame.interpolate`, and :meth:`~pandas.Series.interpolate` have
+  revamped interpolation methods and functionaility.
+
+Both Series and Dataframe objects have an ``interpolate`` method that, by default,
+performs linear interpolation at missing datapoints.
 
 .. ipython:: python
    :suppress:
@@ -248,15 +291,12 @@ interpolation assumes equally spaced points.
 
 .. ipython:: python
 
+   ts
    ts.count()
-
-   ts.head()
-
    ts.interpolate().count()
 
-   ts.interpolate().head()
-
-   @savefig series_interpolate.png width=6in
+   plt.figure()
+   @savefig series_interpolate.png
    ts.interpolate().plot()
 
 Index aware interpolation is available via the ``method`` keyword:
@@ -264,15 +304,13 @@ Index aware interpolation is available via the ``method`` keyword:
 .. ipython:: python
    :suppress:
 
-   ts = ts[[0, 1, 30, 60, 99]]
+   ts2 = ts[[0, 1, 30, 60, 99]]
 
 .. ipython:: python
 
-   ts
-
-   ts.interpolate()
-
-   ts.interpolate(method='time')
+   ts2
+   ts2.interpolate()
+   ts2.interpolate(method='time')
 
 For a floating-point index, use ``method='values'``:
 
@@ -285,10 +323,90 @@ For a floating-point index, use ``method='values'``:
 .. ipython:: python
 
    ser
-
    ser.interpolate()
-
    ser.interpolate(method='values')
+
+You can also interpolate with a DataFrame:
+
+.. ipython:: python
+
+   df = DataFrame({'A': [1, 2.1, np.nan, 4.7, 5.6, 6.8],
+                   'B': [.25, np.nan, np.nan, 4, 12.2, 14.4]})
+   df
+   df.interpolate()
+
+The ``method`` argument gives access to fancier interpolation methods.
+If you have scipy_ installed, you can set pass the name of a 1-d interpolation routine to ``method``.
+You'll want to consult the full scipy interpolation documentation_ and reference guide_ for details.
+The appropriate interpolation method will depend on the type of data you are working with.
+For example, if you are dealing with a time series that is growing at an increasing rate,
+``method='quadratic'`` may be appropriate.  If you have values approximating a cumulative
+distribution function, then ``method='pchip'`` should work well.
+
+.. warning::
+
+   These methods require ``scipy``.
+
+.. ipython:: python
+
+   df.interpolate(method='barycentric')
+
+   df.interpolate(method='pchip')
+
+When interpolating via a polynomial or spline approximation, you must also specify
+the degree or order of the approximation:
+
+.. ipython:: python
+
+   df.interpolate(method='spline', order=2)
+
+   df.interpolate(method='polynomial', order=2)
+
+Compare several methods:
+
+.. ipython:: python
+
+   np.random.seed(2)
+
+   ser = Series(np.arange(1, 10.1, .25)**2 + np.random.randn(37))
+   bad = np.array([4, 13, 14, 15, 16, 17, 18, 20, 29])
+   ser[bad] = np.nan
+   methods = ['linear', 'quadratic', 'cubic']
+
+   df = DataFrame({m: ser.interpolate(method=m) for m in methods})
+   plt.figure()
+   @savefig compare_interpolations.png
+   df.plot()
+
+Another use case is interpolation at *new* values.
+Suppose you have 100 observations from some distribution. And let's suppose
+that you're particularly interested in what's happening around the middle.
+You can mix pandas' ``reindex`` and ``interpolate`` methods to interpolate
+at the new values.
+
+.. ipython:: python
+
+   ser = Series(np.sort(np.random.uniform(size=100)))
+
+   # interpolate at new_index
+   new_index = ser.index + Index([49.25, 49.5, 49.75, 50.25, 50.5, 50.75])
+   interp_s = ser.reindex(new_index).interpolate(method='pchip')
+   interp_s[49:51]
+
+.. _scipy: http://www.scipy.org
+.. _documentation: http://docs.scipy.org/doc/scipy/reference/interpolate.html#univariate-interpolation
+.. _guide: http://docs.scipy.org/doc/scipy/reference/tutorial/interpolate.html
+
+
+Like other pandas fill methods, ``interpolate`` accepts a ``limit`` keyword
+argument.  Use this to limit the number of consecutive interpolations, keeping
+``NaN`` values for interpolations that are too far from the last valid
+observation:
+
+.. ipython:: python
+
+   ser = Series([1, 3, np.nan, np.nan, np.nan, 11])
+   ser.interpolate(limit=2)
 
 .. _missing_data.replace:
 
@@ -334,6 +452,143 @@ missing and interpolate over them:
 
    ser.replace([1, 2, 3], method='pad')
 
+.. _missing_data.replace_expression:
+
+String/Regular Expression Replacement
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. note::
+
+   Python strings prefixed with the ``r`` character such as ``r'hello world'``
+   are so-called "raw" strings. They have different semantics regarding
+   backslashes than strings without this prefix. Backslashes in raw strings
+   will be interpreted as an escaped backslash, e.g., ``r'\' == '\\'``. You
+   should `read about them
+   <http://docs.python.org/2/reference/lexical_analysis.html#string-literals>`__
+   if this is unclear.
+
+Replace the '.' with ``nan`` (str -> str)
+
+.. ipython:: python
+   :suppress:
+
+   from numpy.random import rand, randn
+   from numpy import nan
+   from pandas import DataFrame
+
+.. ipython:: python
+
+   d = {'a': list(range(4)), 'b': list('ab..'), 'c': ['a', 'b', nan, 'd']}
+   df = DataFrame(d)
+   df.replace('.', nan)
+
+Now do it with a regular expression that removes surrounding whitespace
+(regex -> regex)
+
+.. ipython:: python
+
+   df.replace(r'\s*\.\s*', nan, regex=True)
+
+Replace a few different values (list -> list)
+
+.. ipython:: python
+
+   df.replace(['a', '.'], ['b', nan])
+
+list of regex -> list of regex
+
+.. ipython:: python
+
+   df.replace([r'\.', r'(a)'], ['dot', '\1stuff'], regex=True)
+
+Only search in column ``'b'`` (dict -> dict)
+
+.. ipython:: python
+
+   df.replace({'b': '.'}, {'b': nan})
+
+Same as the previous example, but use a regular expression for
+searching instead (dict of regex -> dict)
+
+.. ipython:: python
+
+   df.replace({'b': r'\s*\.\s*'}, {'b': nan}, regex=True)
+
+You can pass nested dictionaries of regular expressions that use ``regex=True``
+
+.. ipython:: python
+
+   df.replace({'b': {'b': r''}}, regex=True)
+
+or you can pass the nested dictionary like so
+
+.. ipython:: python
+
+   df.replace(regex={'b': {r'\s*\.\s*': nan}})
+
+You can also use the group of a regular expression match when replacing (dict
+of regex -> dict of regex), this works for lists as well
+
+.. ipython:: python
+
+   df.replace({'b': r'\s*(\.)\s*'}, {'b': r'\1ty'}, regex=True)
+
+You can pass a list of regular expressions, of which those that match
+will be replaced with a scalar (list of regex -> regex)
+
+.. ipython:: python
+
+   df.replace([r'\s*\.\s*', r'a|b'], nan, regex=True)
+
+All of the regular expression examples can also be passed with the
+``to_replace`` argument as the ``regex`` argument. In this case the ``value``
+argument must be passed explicity by name or ``regex`` must be a nested
+dictionary. The previous example, in this case, would then be
+
+.. ipython:: python
+
+   df.replace(regex=[r'\s*\.\s*', r'a|b'], value=nan)
+
+This can be convenient if you do not want to pass ``regex=True`` every time you
+want to use a regular expression.
+
+.. note::
+
+   Anywhere in the above ``replace`` examples that you see a regular expression
+   a compiled regular expression is valid as well.
+
+Numeric Replacement
+~~~~~~~~~~~~~~~~~~~
+
+Similiar to ``DataFrame.fillna``
+
+.. ipython:: python
+   :suppress:
+
+   from numpy.random import rand, randn
+   from numpy import nan
+   from pandas import DataFrame
+   from pandas.util.testing import assert_frame_equal
+
+.. ipython:: python
+
+   df = DataFrame(randn(10, 2))
+   df[rand(df.shape[0]) > 0.5] = 1.5
+   df.replace(1.5, nan)
+
+Replacing more than one value via lists works as well
+
+.. ipython:: python
+
+   df00 = df.values[0, 0]
+   df.replace([1.5, df00], [nan, 'a'])
+   df[1].dtype
+
+You can also operate on the DataFrame in place
+
+.. ipython:: python
+
+   df.replace(1.5, nan, inplace=True)
 
 Missing data casting rules and indexing
 ---------------------------------------
@@ -360,7 +615,7 @@ For example:
    s = Series(randn(5), index=[0, 2, 4, 6, 7])
    s > 0
    (s > 0).dtype
-   crit = (s > 0).reindex(range(8))
+   crit = (s > 0).reindex(list(range(8)))
    crit
    crit.dtype
 
@@ -372,7 +627,7 @@ contains NAs, an exception will be generated:
 .. ipython:: python
    :okexcept:
 
-   reindexed = s.reindex(range(8)).fillna(0)
+   reindexed = s.reindex(list(range(8))).fillna(0)
    reindexed[crit]
 
 However, these can be filled in using **fillna** and it will work fine:

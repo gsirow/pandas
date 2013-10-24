@@ -17,7 +17,7 @@ objects. To get started, import numpy and load pandas into your namespace:
    from pandas import *
    randn = np.random.randn
    np.set_printoptions(precision=4, suppress=True)
-   set_printoptions(precision=4, max_columns=8)
+   set_option('display.precision', 4, 'display.max_columns', 8)
 
 .. ipython:: python
 
@@ -44,10 +44,15 @@ When using pandas, we recommend the following import convention:
 Series
 ------
 
-:class:`Series` is a one-dimensional labeled array (technically a subclass of
-ndarray) capable of holding any data type (integers, strings, floating point
-numbers, Python objects, etc.). The axis labels are collectively referred to as
-the **index**. The basic method to create a Series is to call:
+.. warning::
+
+   In 0.13.0 ``Series`` has internaly been refactored to no longer sub-class ``ndarray``
+   but instead subclass ``NDFrame``, similarly to the rest of the pandas containers. This should be
+   a transparent change with only very limited API implications (See the :ref:`Internal Refactoring<whatsnew_0130.refactoring>`)
+
+:class:`Series` is a one-dimensional labeled array capable of holding any data
+type (integers, strings, floating point numbers, Python objects, etc.). The axis
+labels are collectively referred to as the **index**. The basic method to create a Series is to call:
 
 ::
 
@@ -77,14 +82,11 @@ index is passed, one will be created having values ``[0, ..., len(data) - 1]``.
 
 .. note::
 
-    Starting in v0.8.0, pandas supports non-unique index values. In previous
-    version, if the index values are not unique an exception will
-    **not** be raised immediately, but attempting any operation involving the
-    index will later result in an exception. In other words, the Index object
-    containing the labels "lazily" checks whether the values are unique. The
-    reason for being lazy is nearly all performance-based (there are many
-    instances in computations, like parts of GroupBy, where the index is not
-    used).
+    Starting in v0.8.0, pandas supports non-unique index values. If an operation
+    that does not support duplicate index values is attempted, an exception
+    will be raised at that time. The reason for being lazy is nearly all performance-based
+    (there are many instances in computations, like parts of GroupBy, where the index
+    is not used).
 
 **From dict**
 
@@ -112,9 +114,8 @@ provided. The value will be repeated to match the length of **index**
 Series is ndarray-like
 ~~~~~~~~~~~~~~~~~~~~~~
 
-As a subclass of ndarray, Series is a valid argument to most NumPy functions
-and behaves similarly to a NumPy array. However, things like slicing also slice
-the index.
+``Series`` acts very similary to a ``ndarray``, and is a valid argument to most NumPy functions.
+However, things like slicing also slice the index.
 
 .. ipython :: python
 
@@ -155,6 +156,8 @@ Using the ``get`` method, a missing label will return None or specified default:
 
    s.get('f', np.nan)
 
+See also the :ref:`section on attribute access<indexing.attribute_access>`.
+
 Vectorized operations and label alignment with Series
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -180,7 +183,7 @@ labels.
 
 The result of an operation between unaligned Series will have the **union** of
 the indexes involved. If a label is not found in one Series or the other, the
-result will be marked as missing (NaN). Being able to write code without doing
+result will be marked as missing ``NaN``. Being able to write code without doing
 any explicit data alignment grants immense freedom and flexibility in
 interactive data analysis and research. The integrated data alignment features
 of the pandas data structures set pandas apart from the majority of related
@@ -485,19 +488,23 @@ column-wise:
 .. ipython:: python
 
    index = date_range('1/1/2000', periods=8)
-   df = DataFrame(randn(8, 3), index=index,
-                  columns=['A', 'B', 'C'])
+   df = DataFrame(randn(8, 3), index=index, columns=list('ABC'))
    df
    type(df['A'])
    df - df['A']
 
-Technical purity aside, this case is so common in practice that supporting the
-special case is preferable to the alternative of forcing the user to transpose
-and do column-based alignment like so:
+.. warning::
 
-.. ipython:: python
+   .. code-block:: python
 
-   (df.T - df['A']).T
+      df - df['A']
+
+   is now deprecated and will be removed in a future release. The preferred way
+   to replicate this behavior is
+
+   .. code-block:: python
+
+      df.sub(df['A'], axis=0)
 
 For explicit control over the matching and broadcasting behavior, see the
 section on :ref:`flexible binary operations <basics.binop>`.
@@ -574,25 +581,25 @@ R package):
    :suppress:
 
    # force a summary to be printed
-   set_printoptions(max_rows=5)
+   pd.set_option('display.max_rows', 5)
 
 .. ipython:: python
 
    baseball = read_csv('data/baseball.csv')
-   print baseball
+   print(baseball)
 
 .. ipython:: python
    :suppress:
 
    # restore GlobalPrintConfig
-   reset_printoptions()
+   pd.reset_option('^display\.')
 
 However, using ``to_string`` will return a string representation of the
 DataFrame in tabular form, though it won't always fit the console width:
 
 .. ipython:: python
 
-   print baseball.iloc[-20:, :12].to_string()
+   print(baseball.iloc[-20:, :12].to_string())
 
 New since 0.10.0, wide DataFrames will now be printed across multiple rows by
 default:
@@ -908,6 +915,8 @@ copy by default unless the data are heterogeneous):
 
    p4d.transpose(3, 2, 1, 0)
 
+.. _dsintro.panelnd:
+
 PanelND (Experimental)
 ----------------------
 
@@ -923,11 +932,11 @@ Here we slice to a Panel4D.
     from pandas.core import panelnd
     Panel5D = panelnd.create_nd_panel_factory(
         klass_name   = 'Panel5D',
-        axis_orders  = [ 'cool', 'labels','items','major_axis','minor_axis'],
-        axis_slices  = { 'labels' : 'labels', 'items' : 'items',
-	                 'major_axis' : 'major_axis', 'minor_axis' : 'minor_axis' },
-        slicer       = Panel4D,
-        axis_aliases = { 'major' : 'major_axis', 'minor' : 'minor_axis' },
+        orders  = [ 'cool', 'labels','items','major_axis','minor_axis'],
+        slices  = { 'labels' : 'labels', 'items' : 'items',
+	                'major_axis' : 'major_axis', 'minor_axis' : 'minor_axis' },
+        slicer  = Panel4D,
+        aliases = { 'major' : 'major_axis', 'minor' : 'minor_axis' },
         stat_axis    = 2)
 
     p5d = Panel5D(dict(C1 = p4d))

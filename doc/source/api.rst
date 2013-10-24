@@ -7,63 +7,171 @@ API Reference
 
 .. _api.functions:
 
-General functions
------------------
-
-Data manipulations
-~~~~~~~~~~~~~~~~~~
-.. currentmodule:: pandas.tools.pivot
-
-.. autosummary::
-   :toctree: generated/
-
-   pivot_table
-
-.. currentmodule:: pandas.tools.merge
-
-.. autosummary::
-   :toctree: generated/
-
-   merge
-   concat
+Input/Output
+------------
 
 Pickling
 ~~~~~~~~
 
-.. currentmodule:: pandas.core.common
-
 .. autosummary::
    :toctree: generated/
 
-   load
-   save
+   read_pickle
 
-File IO
-~~~~~~~
-
-.. currentmodule:: pandas.io.parsers
+Flat File
+~~~~~~~~~
 
 .. autosummary::
    :toctree: generated/
 
    read_table
    read_csv
-   ExcelFile.parse
+   read_fwf
 
-HDFStore: PyTables (HDF5)
-~~~~~~~~~~~~~~~~~~~~~~~~~
-.. currentmodule:: pandas.io.pytables
+Clipboard
+~~~~~~~~~
 
 .. autosummary::
    :toctree: generated/
 
+   read_clipboard
+
+Excel
+~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   read_excel
+   ExcelFile.parse
+
+JSON
+~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   read_json
+
+HTML
+~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   read_html
+
+HDFStore: PyTables (HDF5)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   read_hdf
    HDFStore.put
+   HDFStore.append
    HDFStore.get
+   HDFStore.select
+
+SQL
+~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   read_sql
+
+.. currentmodule:: pandas.io.sql
+
+.. autosummary::
+   :toctree: generated/
+
+   read_frame
+   write_frame
+
+Google BigQuery
+~~~~~~~~~~~~~~~
+.. currentmodule:: pandas.io.gbq
+
+.. autosummary::
+   :toctree: generated/
+
+   read_gbq
+   to_gbq
+
+.. currentmodule:: pandas
+
+
+STATA
+~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   read_stata
+
+.. currentmodule:: pandas.io.stata
+
+.. autosummary::
+   :toctree: generated/
+
+   StataReader.data
+   StataReader.data_label
+   StataReader.value_labels
+   StataReader.variable_labels
+   StataWriter.write_file
+
+.. currentmodule:: pandas
+
+General functions
+-----------------
+
+Data manipulations
+~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   melt
+   pivot_table
+   crosstab
+   cut
+   qcut
+   merge
+   concat
+   get_dummies
+
+Top-level missing data
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   isnull
+   notnull
+
+Top-level dealing with datetimes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   to_datetime
+   to_timedelta
+   date_range
+   bdate_range
+   period_range
+
+Top-level evaluation
+~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   eval
 
 Standard moving window functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. currentmodule:: pandas.stats.moments
 
 .. autosummary::
    :toctree: generated/
@@ -74,17 +182,19 @@ Standard moving window functions
    rolling_median
    rolling_var
    rolling_std
+   rolling_min
+   rolling_max
    rolling_corr
+   rolling_corr_pairwise
    rolling_cov
    rolling_skew
    rolling_kurt
    rolling_apply
    rolling_quantile
+   rolling_window
 
 Standard expanding window functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. currentmodule:: pandas.stats.moments
 
 .. autosummary::
    :toctree: generated/
@@ -95,7 +205,10 @@ Standard expanding window functions
    expanding_median
    expanding_var
    expanding_std
+   expanding_min
+   expanding_max
    expanding_corr
+   expanding_corr_pairwise
    expanding_cov
    expanding_skew
    expanding_kurt
@@ -114,12 +227,17 @@ Exponentially-weighted moving window functions
    ewmcorr
    ewmcov
 
-.. currentmodule:: pandas
-
 .. _api.series:
 
 Series
 ------
+
+Constructor
+~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Series
 
 Attributes and underlying data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -134,15 +252,15 @@ Attributes and underlying data
    Series.isnull
    Series.notnull
 
-Conversion / Constructors
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
+Conversion
+~~~~~~~~~~
 .. autosummary::
    :toctree: generated/
 
-   Series.__init__
    Series.astype
    Series.copy
+   Series.isnull
+   Series.notnull
 
 Indexing, iteration
 ~~~~~~~~~~~~~~~~~~~
@@ -150,9 +268,16 @@ Indexing, iteration
    :toctree: generated/
 
    Series.get
+   Series.at
+   Series.iat
    Series.ix
+   Series.loc
+   Series.iloc
    Series.__iter__
    Series.iteritems
+
+For more information on ``.at``, ``.iat``, ``.ix``, ``.loc``, and
+``.iloc``,  see the :ref:`indexing documentation <indexing>`.
 
 Binary operator functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -160,12 +285,30 @@ Binary operator functions
    :toctree: generated/
 
    Series.add
-   Series.div
-   Series.mul
    Series.sub
+   Series.mul
+   Series.div
+   Series.truediv
+   Series.floordiv
+   Series.mod
+   Series.pow
+   Series.radd
+   Series.rsub
+   Series.rmul
+   Series.rdiv
+   Series.rtruediv
+   Series.rfloordiv
+   Series.rmod
+   Series.rpow
    Series.combine
    Series.combine_first
    Series.round
+   Series.lt
+   Series.gt
+   Series.le
+   Series.ge
+   Series.ne
+   Series.eq
 
 Function application, GroupBy
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -286,8 +429,49 @@ Time series-related
    Series.tz_convert
    Series.tz_localize
 
+String handling
+~~~~~~~~~~~~~~~~~~~
+``Series.str`` can be used to access the values of the series as
+strings and apply several methods to it. Due to implementation
+details the methods show up here as methods of the
+``StringMethods`` class.
+
+.. currentmodule:: pandas.core.strings
+
+.. autosummary::
+   :toctree: generated/
+
+   StringMethods.cat
+   StringMethods.center
+   StringMethods.contains
+   StringMethods.count
+   StringMethods.decode
+   StringMethods.encode
+   StringMethods.endswith
+   StringMethods.extract
+   StringMethods.findall
+   StringMethods.get
+   StringMethods.join
+   StringMethods.len
+   StringMethods.lower
+   StringMethods.lstrip
+   StringMethods.match
+   StringMethods.pad
+   StringMethods.repeat
+   StringMethods.replace
+   StringMethods.rstrip
+   StringMethods.slice
+   StringMethods.slice_replace
+   StringMethods.split
+   StringMethods.startswith
+   StringMethods.strip
+   StringMethods.title
+   StringMethods.upper
+
 Plotting
 ~~~~~~~~
+.. currentmodule:: pandas
+
 .. autosummary::
    :toctree: generated/
 
@@ -300,17 +484,27 @@ Serialization / IO / Conversion
    :toctree: generated/
 
    Series.from_csv
-   Series.load
-   Series.save
+   Series.to_pickle
    Series.to_csv
    Series.to_dict
+   Series.to_frame
+   Series.to_hdf
+   Series.to_json
    Series.to_sparse
    Series.to_string
+   Series.to_clipboard
 
 .. _api.dataframe:
 
 DataFrame
 ---------
+
+Constructor
+~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   DataFrame
 
 Attributes and underlying data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -330,15 +524,16 @@ Attributes and underlying data
    DataFrame.ndim
    DataFrame.shape
 
-Conversion / Constructors
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Conversion
+~~~~~~~~~~
 .. autosummary::
    :toctree: generated/
 
-   DataFrame.__init__
    DataFrame.astype
    DataFrame.convert_objects
    DataFrame.copy
+   DataFrame.isnull
+   DataFrame.notnull
 
 Indexing, iteration
 ~~~~~~~~~~~~~~~~~~~
@@ -346,7 +541,11 @@ Indexing, iteration
    :toctree: generated/
 
    DataFrame.head
+   DataFrame.at
+   DataFrame.iat
    DataFrame.ix
+   DataFrame.loc
+   DataFrame.iloc
    DataFrame.insert
    DataFrame.__iter__
    DataFrame.iteritems
@@ -356,6 +555,12 @@ Indexing, iteration
    DataFrame.pop
    DataFrame.tail
    DataFrame.xs
+   DataFrame.isin
+   DataFrame.query
+
+For more information on ``.at``, ``.iat``, ``.ix``, ``.loc``, and
+``.iloc``,  see the :ref:`indexing documentation <indexing>`.
+
 
 Binary operator functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -363,13 +568,27 @@ Binary operator functions
    :toctree: generated/
 
    DataFrame.add
-   DataFrame.div
-   DataFrame.mul
    DataFrame.sub
+   DataFrame.mul
+   DataFrame.div
+   DataFrame.truediv
+   DataFrame.floordiv
+   DataFrame.mod
+   DataFrame.pow
    DataFrame.radd
-   DataFrame.rdiv
-   DataFrame.rmul
    DataFrame.rsub
+   DataFrame.rmul
+   DataFrame.rdiv
+   DataFrame.rtruediv
+   DataFrame.rfloordiv
+   DataFrame.rmod
+   DataFrame.rpow
+   DataFrame.lt
+   DataFrame.gt
+   DataFrame.le
+   DataFrame.ge
+   DataFrame.ne
+   DataFrame.eq
    DataFrame.combine
    DataFrame.combineAdd
    DataFrame.combine_first
@@ -406,6 +625,7 @@ Computations / Descriptive Stats
    DataFrame.cumsum
    DataFrame.describe
    DataFrame.diff
+   DataFrame.eval
    DataFrame.kurt
    DataFrame.mad
    DataFrame.max
@@ -458,6 +678,7 @@ Missing data handling
 
    DataFrame.dropna
    DataFrame.fillna
+   DataFrame.replace
 
 Reshaping, sorting, transposing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -485,7 +706,6 @@ Combining / joining / merging
    DataFrame.append
    DataFrame.join
    DataFrame.merge
-   DataFrame.replace
    DataFrame.update
 
 Time series-related
@@ -522,23 +742,594 @@ Serialization / IO / Conversion
    DataFrame.from_items
    DataFrame.from_records
    DataFrame.info
-   DataFrame.load
-   DataFrame.save
+   DataFrame.to_pickle
    DataFrame.to_csv
+   DataFrame.to_hdf
    DataFrame.to_dict
    DataFrame.to_excel
+   DataFrame.to_json
    DataFrame.to_html
+   DataFrame.to_latex
+   DataFrame.to_stata
    DataFrame.to_records
    DataFrame.to_sparse
    DataFrame.to_string
+   DataFrame.to_clipboard
 
 .. _api.panel:
 
 Panel
------
+------
+
+Constructor
+~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel
+
+Attributes and underlying data
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Axes**
+
+  * **items**: axis 0; each item corresponds to a DataFrame contained inside
+  * **major_axis**: axis 1; the index (rows) of each of the DataFrames
+  * **minor_axis**: axis 2; the columns of each of the DataFrames
+
+.. autosummary::
+   :toctree: generated/
+
+   Panel.values
+   Panel.axes
+   Panel.ndim
+   Panel.shape
+
+Conversion
+~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.astype
+   Panel.copy
+   Panel.isnull
+   Panel.notnull
+
+Getting and setting
+~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.get_value
+   Panel.set_value
+
+Indexing, iteration, slicing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.at
+   Panel.iat
+   Panel.ix
+   Panel.loc
+   Panel.iloc
+   Panel.__iter__
+   Panel.iteritems
+   Panel.pop
+   Panel.xs
+   Panel.major_xs
+   Panel.minor_xs
+
+For more information on ``.at``, ``.iat``, ``.ix``, ``.loc``, and
+``.iloc``,  see the :ref:`indexing documentation <indexing>`.
+
+Binary operator functions
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.add
+   Panel.sub
+   Panel.mul
+   Panel.div
+   Panel.truediv
+   Panel.floordiv
+   Panel.mod
+   Panel.pow
+   Panel.radd
+   Panel.rsub
+   Panel.rmul
+   Panel.rdiv
+   Panel.rtruediv
+   Panel.rfloordiv
+   Panel.rmod
+   Panel.rpow
+   Panel.lt
+   Panel.gt
+   Panel.le
+   Panel.ge
+   Panel.ne
+   Panel.eq
+
+Function application, GroupBy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.apply
+   Panel.groupby
 
 .. _api.panel.stats:
 
 Computations / Descriptive Stats
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
 
+   Panel.abs
+   Panel.clip
+   Panel.clip_lower
+   Panel.clip_upper
+   Panel.count
+   Panel.cummax
+   Panel.cummin
+   Panel.cumprod
+   Panel.cumsum
+   Panel.max
+   Panel.mean
+   Panel.median
+   Panel.min
+   Panel.pct_change
+   Panel.prod
+   Panel.skew
+   Panel.sum
+   Panel.std
+   Panel.var
+
+Reindexing / Selection / Label manipulation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.add_prefix
+   Panel.add_suffix
+   Panel.drop
+   Panel.filter
+   Panel.first
+   Panel.last
+   Panel.reindex
+   Panel.reindex_axis
+   Panel.reindex_like
+   Panel.rename
+   Panel.select
+   Panel.take
+   Panel.truncate
+
+Missing data handling
+~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.dropna
+   Panel.fillna
+
+Reshaping, sorting, transposing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.sort_index
+   Panel.swaplevel
+   Panel.transpose
+   Panel.swapaxes
+   Panel.conform
+
+Combining / joining / merging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.join
+   Panel.update
+
+Time series-related
+~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.asfreq
+   Panel.shift
+   Panel.resample
+   Panel.tz_convert
+   Panel.tz_localize
+
+Serialization / IO / Conversion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel.from_dict
+   Panel.to_pickle
+   Panel.to_excel
+   Panel.to_hdf
+   Panel.to_json
+   Panel.to_sparse
+   Panel.to_frame
+   Panel.to_clipboard
+
+.. _api.index:
+
+Index
+-----
+
+**Many of these methods or variants thereof are available on the objects
+that contain an index (Series/Dataframe) and those should most likely be
+used before calling these methods directly.**
+
+.. autosummary::
+   :toctree: generated/
+
+   Index
+
+Modifying and Computations
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.copy
+   Index.delete
+   Index.diff
+   Index.drop
+   Index.equals
+   Index.identical
+   Index.insert
+   Index.order
+   Index.reindex
+   Index.repeat
+   Index.set_names
+   Index.unique
+
+Conversion
+~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.astype
+   Index.tolist
+   Index.to_datetime
+   Index.to_series
+
+Sorting
+~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.argsort
+   Index.order
+   Index.sort
+
+Time-specific operations
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.shift
+
+Combining / joining / merging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.append
+   Index.intersection
+   Index.join
+   Index.union
+
+Selecting
+~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.get_indexer
+   Index.get_indexer_non_unique
+   Index.get_level_values
+   Index.get_loc
+   Index.get_value
+   Index.isin
+   Index.slice_indexer
+   Index.slice_locs
+
+Properties
+~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Index.is_monotonic
+   Index.is_numeric
+
+.. _api.datetimeindex:
+
+DatetimeIndex
+-------------
+
+.. autosummary::
+   :toctree: generated/
+
+   DatetimeIndex
+
+Time/Date Components
+~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   DatetimeIndex.year
+   DatetimeIndex.month
+   DatetimeIndex.day
+   DatetimeIndex.hour
+   DatetimeIndex.minute
+   DatetimeIndex.second
+   DatetimeIndex.microsecond
+   DatetimeIndex.nanosecond
+   DatetimeIndex.date
+   DatetimeIndex.time
+   DatetimeIndex.dayofyear
+   DatetimeIndex.weekofyear
+   DatetimeIndex.week
+   DatetimeIndex.dayofweek
+   DatetimeIndex.weekday
+   DatetimeIndex.quarter
+
+
+Selecting
+~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   DatetimeIndex.indexer_at_time
+   DatetimeIndex.indexer_between_time
+
+
+Time-specific operations
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   DatetimeIndex.normalize
+   DatetimeIndex.snap
+   DatetimeIndex.tz_convert
+   DatetimeIndex.tz_localize
+
+
+Conversion
+~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   DatetimeIndex.to_datetime
+   DatetimeIndex.to_period
+   DatetimeIndex.to_pydatetime
+
+
+..
+    HACK - see github issue #4539. To ensure old links remain valid, include
+    here the autosummaries with previous currentmodules as a comment and add
+    them to a hidden toctree (to avoid warnings):
+
+.. toctree::
+   :hidden:
+   
+   generated/pandas.core.common.isnull
+   generated/pandas.core.common.notnull
+   generated/pandas.core.reshape.get_dummies
+   generated/pandas.io.clipboard.read_clipboard
+   generated/pandas.io.excel.ExcelFile.parse
+   generated/pandas.io.excel.read_excel
+   generated/pandas.io.html.read_html
+   generated/pandas.io.json.read_json
+   generated/pandas.io.parsers.read_csv
+   generated/pandas.io.parsers.read_fwf
+   generated/pandas.io.parsers.read_table
+   generated/pandas.io.pickle.read_pickle
+   generated/pandas.io.pytables.HDFStore.append
+   generated/pandas.io.pytables.HDFStore.get
+   generated/pandas.io.pytables.HDFStore.put
+   generated/pandas.io.pytables.HDFStore.select
+   generated/pandas.io.pytables.read_hdf
+   generated/pandas.io.sql.read_sql
+   generated/pandas.io.stata.read_stata
+   generated/pandas.stats.moments.ewma
+   generated/pandas.stats.moments.ewmcorr
+   generated/pandas.stats.moments.ewmcov
+   generated/pandas.stats.moments.ewmstd
+   generated/pandas.stats.moments.ewmvar
+   generated/pandas.stats.moments.expanding_apply
+   generated/pandas.stats.moments.expanding_corr
+   generated/pandas.stats.moments.expanding_count
+   generated/pandas.stats.moments.expanding_cov
+   generated/pandas.stats.moments.expanding_kurt
+   generated/pandas.stats.moments.expanding_mean
+   generated/pandas.stats.moments.expanding_median
+   generated/pandas.stats.moments.expanding_quantile
+   generated/pandas.stats.moments.expanding_skew
+   generated/pandas.stats.moments.expanding_std
+   generated/pandas.stats.moments.expanding_sum
+   generated/pandas.stats.moments.expanding_var
+   generated/pandas.stats.moments.rolling_apply
+   generated/pandas.stats.moments.rolling_corr
+   generated/pandas.stats.moments.rolling_count
+   generated/pandas.stats.moments.rolling_cov
+   generated/pandas.stats.moments.rolling_kurt
+   generated/pandas.stats.moments.rolling_mean
+   generated/pandas.stats.moments.rolling_median
+   generated/pandas.stats.moments.rolling_quantile
+   generated/pandas.stats.moments.rolling_skew
+   generated/pandas.stats.moments.rolling_std
+   generated/pandas.stats.moments.rolling_sum
+   generated/pandas.stats.moments.rolling_var
+   generated/pandas.tools.merge.concat
+   generated/pandas.tools.merge.merge
+   generated/pandas.tools.pivot.pivot_table
+   generated/pandas.tseries.tools.to_datetime
+
+..
+    .. currentmodule:: pandas.io.pickle
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_pickle
+
+    .. currentmodule:: pandas.io.parsers
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_table
+       read_csv
+       read_fwf
+
+    .. currentmodule:: pandas.io.clipboard
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_clipboard
+
+    .. currentmodule:: pandas.io.excel
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_excel
+       ExcelFile.parse
+
+    .. currentmodule:: pandas.io.json
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_json
+
+    .. currentmodule:: pandas.io.html
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_html
+
+    .. currentmodule:: pandas.io.pytables
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_hdf
+       HDFStore.put
+       HDFStore.append
+       HDFStore.get
+       HDFStore.select
+
+    .. currentmodule:: pandas.io.sql
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_sql
+       read_frame
+       write_frame
+
+    .. currentmodule:: pandas.io.stata
+
+    .. autosummary::
+       :toctree: generated/
+
+       read_stata
+       StataReader.data
+       StataReader.data_label
+       StataReader.value_labels
+       StataReader.variable_labels
+       StataWriter.write_file
+
+    .. currentmodule:: pandas.tools.pivot
+
+    .. autosummary::
+       :toctree: generated/
+
+       pivot_table
+
+    .. currentmodule:: pandas.tools.merge
+
+    .. autosummary::
+       :toctree: generated/
+
+       merge
+       concat
+
+    .. currentmodule:: pandas.core.reshape
+
+    .. autosummary::
+       :toctree: generated/
+
+       get_dummies
+
+    .. currentmodule:: pandas.core.common
+
+    .. autosummary::
+       :toctree: generated/
+
+       isnull
+       notnull
+
+    .. currentmodule:: pandas.tseries.tools
+
+    .. autosummary::
+       :toctree: generated/
+
+       to_datetime
+
+
+    .. currentmodule:: pandas.stats.moments
+
+    .. autosummary::
+       :toctree: generated/
+
+       rolling_count
+       rolling_sum
+       rolling_mean
+       rolling_median
+       rolling_var
+       rolling_std
+       rolling_corr
+       rolling_cov
+       rolling_skew
+       rolling_kurt
+       rolling_apply
+       rolling_quantile
+
+
+    .. currentmodule:: pandas.stats.moments
+
+    .. autosummary::
+       :toctree: generated/
+
+       expanding_count
+       expanding_sum
+       expanding_mean
+       expanding_median
+       expanding_var
+       expanding_std
+       expanding_corr
+       expanding_cov
+       expanding_skew
+       expanding_kurt
+       expanding_apply
+       expanding_quantile
+
+
+    .. autosummary::
+       :toctree: generated/
+
+       ewma
+       ewmstd
+       ewmvar
+       ewmcorr
+       ewmcov

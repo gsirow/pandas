@@ -463,7 +463,7 @@ static int end_line(parser_t *self) {
 
     /* printf("Line: %d, Fields: %d, Ex-fields: %d\n", self->lines, fields, ex_fields); */
 
-    if (!(self->lines <= self->header + 1)
+    if (!(self->lines <= self->header_end + 1)
         && (self->expected_fields < 0 && fields > ex_fields)) {
         // increment file line count
         self->file_lines++;
@@ -498,7 +498,14 @@ static int end_line(parser_t *self) {
     }
     else {
         /* missing trailing delimiters */
-        if (self->lines >= self->header + 1) {
+        if ((self->lines >= self->header_end + 1) && fields < ex_fields) {
+
+            /* Might overrun the buffer when closing fields */
+            if (make_stream_space(self, ex_fields - fields) < 0) {
+                self->error_msg = "out of memory";
+                return -1;
+            }
+
             while (fields < ex_fields){
                 end_field(self);
                 /* printf("Prior word: %s\n", self->words[self->words_len - 2]); */
@@ -680,6 +687,7 @@ int tokenize_delimited(parser_t *self, size_t line_limit)
                self->state));
 
         switch(self->state) {
+
         case START_RECORD:
             // start of record
 
@@ -695,12 +703,12 @@ int tokenize_delimited(parser_t *self, size_t line_limit)
             /* normal character - handle as START_FIELD */
             self->state = START_FIELD;
             /* fallthru */
+
         case START_FIELD:
             /* expecting field */
             if (c == '\n') {
                 END_FIELD();
                 END_LINE();
-                /* self->state = START_RECORD; */
             } else if (c == '\r') {
                 END_FIELD();
                 self->state = EAT_CRNL;
@@ -839,6 +847,14 @@ int tokenize_delimited(parser_t *self, size_t line_limit)
             }
             break;
 
+        case EAT_COMMENT:
+            if (c == '\n') {
+                END_LINE();
+            } else if (c == '\r') {
+                self->state = EAT_CRNL;
+            }
+            break;
+
         case EAT_CRNL:
             if (c == '\n') {
                 END_LINE();
@@ -847,16 +863,23 @@ int tokenize_delimited(parser_t *self, size_t line_limit)
                 // Handle \r-delimited files
                 END_LINE_AND_FIELD_STATE(START_FIELD);
             } else {
-                PUSH_CHAR(c);
-                END_LINE_STATE(IN_FIELD);
-            }
-            break;
+                /* \r line terminator */
 
-        case EAT_COMMENT:
-            if (c == '\n') {
-                END_LINE();
-            } else if (c == '\r') {
-                self->state = EAT_CRNL;
+                /* UGH. we don't actually want to consume the token. fix this later */
+                self->stream_len = slen;
+                if (end_line(self) < 0) {
+                    goto parsingerror;
+                }
+                stream = self->stream + self->stream_len;
+                slen = self->stream_len;
+                self->state = START_RECORD;
+
+                /* HACK, let's try this one again */
+                --i; buf--;
+                if (line_limit > 0 && self->lines == start_lines + line_limit) {
+                    goto linelimit;
+                }
+
             }
             break;
 
@@ -1609,7 +1632,7 @@ void test_count_lines(char *fname) {
 
 
 // forward declaration
-static double xstrtod(const char *p, char **q, char decimal, char sci, int skip_trailing);
+static double xstrtod(const char *p, char **q, char decimal, char sci, char tsep, int skip_trailing);
 
 
 P_INLINE void lowercase(char *p) {
@@ -1637,11 +1660,11 @@ P_INLINE void uppercase(char *p) {
  *
  */
 
-int to_double(char *item, double *p_value, char sci, char decimal)
+int to_double(char *item, double *p_value, char sci, char decimal, char tsep)
 {
     char *p_end;
 
-    *p_value = xstrtod(item, &p_end, decimal, sci, TRUE);
+    *p_value = xstrtod(item, &p_end, decimal, sci, tsep, TRUE);
 
     return (errno == 0) && (!*p_end);
 }
@@ -1651,7 +1674,7 @@ int P_INLINE to_complex(char *item, double *p_real, double *p_imag, char sci, ch
 {
     char *p_end;
 
-    *p_real = xstrtod(item, &p_end, decimal, sci, FALSE);
+    *p_real = xstrtod(item, &p_end, decimal, sci, '\0', FALSE);
     if (*p_end == '\0') {
         *p_imag = 0.0;
         return errno == 0;
@@ -1665,7 +1688,7 @@ int P_INLINE to_complex(char *item, double *p_real, double *p_imag, char sci, ch
         if (*p_end == '+') {
             ++p_end;
         }
-        *p_imag = xstrtod(p_end, &p_end, decimal, sci, FALSE);
+        *p_imag = xstrtod(p_end, &p_end, decimal, sci, '\0', FALSE);
         if (errno || ((*p_end != 'i') && (*p_end != 'j'))) {
             return FALSE;
         }
@@ -1832,10 +1855,12 @@ int main(int argc, char *argv[])
 // * Added decimal and sci arguments.
 // * Skip trailing spaces.
 // * Commented out the other functions.
+// Modifications by Richard T Guy, August 2013:
+// * Add tsep argument for thousands separator
 //
 
 static double xstrtod(const char *str, char **endptr, char decimal,
-                      char sci, int skip_trailing)
+                      char sci, char tsep, int skip_trailing)
 {
   double number;
   int exponent;
@@ -1870,6 +1895,8 @@ static double xstrtod(const char *str, char **endptr, char decimal,
     number = number * 10. + (*p - '0');
     p++;
     num_digits++;
+
+    p += (tsep != '\0' & *p == tsep);
   }
 
   // Process decimal part

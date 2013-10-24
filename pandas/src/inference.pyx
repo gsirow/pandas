@@ -41,16 +41,16 @@ def infer_dtype(object _values):
             _values = list(_values)
         values = list_to_object_array(_values)
 
-    n = len(values)
-    if n == 0:
-        return 'empty'
-
     val_kind = values.dtype.type
     if val_kind in _TYPE_MAP:
         return _TYPE_MAP[val_kind]
 
     if values.dtype != np.object_:
         values = values.astype('O')
+
+    n = len(values)
+    if n == 0:
+        return 'empty'
 
     val = util.get_value_1d(values, 0)
 
@@ -96,6 +96,10 @@ def infer_dtype(object _values):
     elif is_timedelta(val):
         if is_timedelta_or_timedelta64_array(values):
             return 'timedelta'
+
+    elif is_period(val):
+        if is_period_array(values):
+            return 'period'
 
     for i in range(n):
         val = util.get_value_1d(values, i)
@@ -321,9 +325,13 @@ def is_time_array(ndarray[object] values):
             return False
     return True
 
+def is_period(object o):
+    from pandas import Period
+    return isinstance(o,Period)
+
 def is_period_array(ndarray[object] values):
     cdef int i, n = len(values)
-    from pandas import Period
+    from pandas.tseries.period import Period
 
     if n == 0:
         return False
@@ -365,17 +373,20 @@ def maybe_convert_numeric(ndarray[object] values, set na_values,
     for i from 0 <= i < n:
         val = values[i]
 
-        if util.is_float_object(val):
-            floats[i] = complexes[i] = val
-            seen_float = 1
-        elif val in na_values:
+        if val in na_values:
             floats[i] = complexes[i] = nan
             seen_float = 1
+        elif util.is_float_object(val):
+            floats[i] = complexes[i] = val
+            seen_float = 1
+        elif util.is_integer_object(val):
+            floats[i] = ints[i] = val
+            seen_int = 1
         elif val is None:
             floats[i] = complexes[i] = nan
             seen_float = 1
-        elif len(val) == 0:
-            if convert_empty:
+        elif hasattr(val,'__len__') and len(val) == 0:
+            if convert_empty or coerce_numeric:
                 floats[i] = complexes[i] = nan
                 seen_float = 1
             else:
@@ -393,7 +404,10 @@ def maybe_convert_numeric(ndarray[object] values, set na_values,
                     elif 'inf' in val:  # special case to handle +/-inf
                         seen_float = 1
                     elif fval < fINT64_MAX and fval > fINT64_MIN:
-                        ints[i] = <int64_t> fval
+                        try:
+                            ints[i] = int(val)
+                        except ValueError:
+                            ints[i] = <int64_t> fval
                     else:
                         seen_float = 1
             except:
@@ -402,7 +416,7 @@ def maybe_convert_numeric(ndarray[object] values, set na_values,
 
                 floats[i] = nan
                 seen_float = 1
-               
+
 
     if seen_complex:
         return complexes
@@ -460,12 +474,15 @@ def maybe_convert_objects(ndarray[object] objects, bint try_float=0,
             seen_float = 1
         elif util.is_datetime64_object(val):
             if convert_datetime:
-                idatetimes[i] = convert_to_tsobject(val, None).value
+                idatetimes[i] = convert_to_tsobject(val, None, None).value
                 seen_datetime = 1
             else:
                 seen_object = 1
                 # objects[i] = val.astype('O')
                 break
+        elif util.is_timedelta64_object(val):
+            seen_object = 1
+            break
         elif util.is_integer_object(val):
             seen_int = 1
             floats[i] = <float64_t> val
@@ -482,7 +499,7 @@ def maybe_convert_objects(ndarray[object] objects, bint try_float=0,
         elif PyDateTime_Check(val) or util.is_datetime64_object(val):
             if convert_datetime:
                 seen_datetime = 1
-                idatetimes[i] = convert_to_tsobject(val, None).value
+                idatetimes[i] = convert_to_tsobject(val, None, None).value
             else:
                 seen_object = 1
                 break
@@ -691,20 +708,22 @@ def try_parse_datetime_components(ndarray[object] years,
         Py_ssize_t i, n
         ndarray[object] result
         int secs
+        double float_secs
         double micros
 
     from datetime import datetime
 
     n = len(years)
-    if (len(months) != n and len(days) != n and len(hours) != n and
-        len(minutes) != n and len(seconds) != n):
+    if (len(months) != n or len(days) != n or len(hours) != n or
+        len(minutes) != n or len(seconds) != n):
         raise ValueError('Length of all datetime components must be equal')
     result = np.empty(n, dtype='O')
 
     for i from 0 <= i < n:
-        secs = int(seconds[i])
+        float_secs = float(seconds[i])
+        secs = int(float_secs)
 
-        micros = seconds[i] - secs
+        micros = float_secs - secs
         if micros > 0:
             micros = micros * 1000000
 

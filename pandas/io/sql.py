@@ -2,13 +2,16 @@
 Collection of query wrappers / abstractions to both facilitate data
 retrieval and to reduce dependency on DB-specific API.
 """
+from __future__ import print_function
 from datetime import datetime, date
 
+from pandas.compat import range, lzip, map, zip
+import pandas.compat as compat
 import numpy as np
 import traceback
 
 from pandas.core.datetools import format as date_format
-from pandas.core.api import DataFrame, isnull
+from pandas.core.api import DataFrame
 
 #------------------------------------------------------------------------------
 # Helper execution function
@@ -22,6 +25,15 @@ def execute(sql, con, retry=True, cur=None, params=None):
     ----------
     sql: string
         Query to be executed
+    con: database connection instance
+        Database connection.  Must implement PEP249 (Database API v2.0).
+    retry: bool
+        Not currently implemented
+    cur: database cursor, optional
+        Must implement PEP249 (Datbase API v2.0).  If cursor is not provided,
+        one will be obtained from the database connection.
+    params: list or tuple, optional
+        List of parameters to pass to execute method.
 
     Returns
     -------
@@ -42,7 +54,7 @@ def execute(sql, con, retry=True, cur=None, params=None):
         except Exception:  # pragma: no cover
             pass
 
-        print 'Error on sql %s' % sql
+        print('Error on sql %s' % sql)
         raise
 
 
@@ -52,7 +64,7 @@ def _safe_fetch(cur):
         if not isinstance(result, list):
             result = list(result)
         return result
-    except Exception, e:  # pragma: no cover
+    except Exception as e:  # pragma: no cover
         excName = e.__class__.__name__
         if excName == 'OperationalError':
             return []
@@ -82,10 +94,10 @@ def tquery(sql, con=None, cur=None, retry=True):
         try:
             cur.close()
             con.commit()
-        except Exception, e:
+        except Exception as e:
             excName = e.__class__.__name__
             if excName == 'OperationalError':  # pragma: no cover
-                print 'Failed to commit, may need to restart interpreter'
+                print('Failed to commit, may need to restart interpreter')
             else:
                 raise
 
@@ -95,14 +107,14 @@ def tquery(sql, con=None, cur=None, retry=True):
 
     if result and len(result[0]) == 1:
         # python 3 compat
-        result = list(list(zip(*result))[0])
+        result = list(lzip(*result)[0])
     elif result is None:  # pragma: no cover
         result = []
 
     return result
 
 
-def uquery(sql, con=None, cur=None, retry=True, params=()):
+def uquery(sql, con=None, cur=None, retry=True, params=None):
     """
     Does the same thing as tquery, but instead of returning results, it
     returns the number of rows affected.  Good for update queries.
@@ -112,14 +124,14 @@ def uquery(sql, con=None, cur=None, retry=True, params=()):
     result = cur.rowcount
     try:
         con.commit()
-    except Exception, e:
+    except Exception as e:
         excName = e.__class__.__name__
         if excName != 'OperationalError':
             raise
 
         traceback.print_exc()
         if retry:
-            print 'Looks like your connection failed, reconnecting...'
+            print('Looks like your connection failed, reconnecting...')
             return uquery(sql, con, retry=False)
     return result
 
@@ -138,9 +150,12 @@ def read_frame(sql, con, index_col=None, coerce_float=True, params=None):
         SQL query to be executed
     con: DB connection object, optional
     index_col: string, optional
-        column name to use for the returned DataFrame object
-    params: tuple, optional
-        params for SQL query.
+        column name to use for the returned DataFrame object.
+    coerce_float : boolean, default True
+        Attempt to convert values to non-string, non-numeric objects (like
+        decimal.Decimal) to floating point, useful for SQL result sets
+    params: list or tuple, optional
+        List of parameters to pass to execute method.
     """
     cur = execute(sql, con, params=params)
     rows = _safe_fetch(cur)
@@ -158,6 +173,7 @@ def read_frame(sql, con, index_col=None, coerce_float=True, params=None):
     return result
 
 frame_query = read_frame
+read_sql = read_frame
 
 
 def write_frame(frame, name, con, flavor='sqlite', if_exists='fail', **kwargs):
@@ -168,7 +184,7 @@ def write_frame(frame, name, con, flavor='sqlite', if_exists='fail', **kwargs):
     ----------
     frame: DataFrame
     name: name of SQL table
-    conn: an open SQL database connection object
+    con: an open SQL database connection object
     flavor: {'sqlite', 'mysql', 'oracle'}, default 'sqlite'
     if_exists: {'fail', 'replace', 'append'}, default 'fail'
         fail: If table exists, do nothing.
@@ -181,12 +197,12 @@ def write_frame(frame, name, con, flavor='sqlite', if_exists='fail', **kwargs):
         warnings.warn("append is deprecated, use if_exists instead",
                       FutureWarning)
         if kwargs['append']:
-            if_exists='append'
+            if_exists = 'append'
         else:
-            if_exists='fail'
+            if_exists = 'fail'
     exists = table_exists(name, con, flavor)
     if if_exists == 'fail' and exists:
-        raise ValueError, "Table '%s' already exists." % name
+        raise ValueError("Table '%s' already exists." % name)
 
     #create or drop-recreate if necessary
     create = None
@@ -203,8 +219,8 @@ def write_frame(frame, name, con, flavor='sqlite', if_exists='fail', **kwargs):
     cur = con.cursor()
     # Replace spaces in DataFrame column names with _.
     safe_names = [s.replace(' ', '_').strip() for s in frame.columns]
-    flavor_picker = {'sqlite' : _write_sqlite,
-                     'mysql' : _write_mysql}
+    flavor_picker = {'sqlite': _write_sqlite,
+                     'mysql': _write_mysql}
 
     func = flavor_picker.get(flavor, None)
     if func is None:
@@ -213,14 +229,20 @@ def write_frame(frame, name, con, flavor='sqlite', if_exists='fail', **kwargs):
     cur.close()
     con.commit()
 
+
 def _write_sqlite(frame, table, names, cur):
     bracketed_names = ['[' + column + ']' for column in names]
     col_names = ','.join(bracketed_names)
     wildcards = ','.join(['?'] * len(names))
     insert_query = 'INSERT INTO %s (%s) VALUES (%s)' % (
         table, col_names, wildcards)
-    data = [tuple(x) for x in frame.values]
+    # pandas types are badly handled if there is only 1 column ( Issue #3628 )
+    if not len(frame.columns) == 1:
+        data = [tuple(x) for x in frame.values]
+    else:
+        data = [tuple(x) for x in frame.values.tolist()]
     cur.executemany(insert_query, data)
+
 
 def _write_mysql(frame, table, names, cur):
     bracketed_names = ['`' + column + '`' for column in names]
@@ -231,15 +253,17 @@ def _write_mysql(frame, table, names, cur):
     data = [tuple(x) for x in frame.values]
     cur.executemany(insert_query, data)
 
+
 def table_exists(name, con, flavor):
     flavor_map = {
         'sqlite': ("SELECT name FROM sqlite_master "
                    "WHERE type='table' AND name='%s';") % name,
-        'mysql' : "SHOW TABLES LIKE '%s'" % name}
+        'mysql': "SHOW TABLES LIKE '%s'" % name}
     query = flavor_map.get(flavor, None)
     if query is None:
         raise NotImplementedError
     return len(tquery(query, con)) > 0
+
 
 def get_sqltype(pytype, flavor):
     sqltype = {'mysql': 'VARCHAR (63)',
@@ -268,12 +292,13 @@ def get_sqltype(pytype, flavor):
 
     return sqltype[flavor]
 
+
 def get_schema(frame, name, flavor, keys=None):
     "Return a CREATE TABLE statement to suit the contents of a DataFrame."
     lookup_type = lambda dtype: get_sqltype(dtype.type, flavor)
     # Replace spaces in DataFrame column names with _.
     safe_columns = [s.replace(' ', '_').strip() for s in frame.dtypes.index]
-    column_types = zip(safe_columns, map(lookup_type, frame.dtypes))
+    column_types = lzip(safe_columns, map(lookup_type, frame.dtypes))
     if flavor == 'sqlite':
         columns = ',\n  '.join('[%s] %s' % x for x in column_types)
     else:
@@ -281,7 +306,7 @@ def get_schema(frame, name, flavor, keys=None):
 
     keystr = ''
     if keys is not None:
-        if isinstance(keys, basestring):
+        if isinstance(keys, compat.string_types):
             keys = (keys,)
         keystr = ', PRIMARY KEY (%s)' % ','.join(keys)
     template = """CREATE TABLE %(name)s (
@@ -291,6 +316,7 @@ def get_schema(frame, name, flavor, keys=None):
     create_statement = template % {'name': name, 'columns': columns,
                                    'keystr': keystr}
     return create_statement
+
 
 def sequence2dict(seq):
     """Helper function for cx_Oracle.
@@ -304,6 +330,6 @@ def sequence2dict(seq):
     http://www.gingerandjohn.com/archives/2004/02/26/cx_oracle-executemany-example/
     """
     d = {}
-    for k,v in zip(range(1, 1 + len(seq)), seq):
+    for k, v in zip(range(1, 1 + len(seq)), seq):
         d[str(k)] = v
     return d

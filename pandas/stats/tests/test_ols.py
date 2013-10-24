@@ -7,6 +7,8 @@ Unit test suite for OLS and PanelOLS classes
 from __future__ import division
 
 from datetime import datetime
+from pandas import compat
+from distutils.version import LooseVersion
 import unittest
 import nose
 import numpy as np
@@ -19,10 +21,10 @@ from pandas.stats.api import ols
 from pandas.stats.ols import _filter_data
 from pandas.stats.plm import NonPooledPanelOLS, PanelOLS
 from pandas.util.testing import (assert_almost_equal, assert_series_equal,
-                                 assert_frame_equal)
+                                 assert_frame_equal, assertRaisesRegexp)
 import pandas.util.testing as tm
-
-from common import BaseTest
+import pandas.compat as compat
+from .common import BaseTest
 
 _have_statsmodels = True
 try:
@@ -40,7 +42,7 @@ def _check_repr(obj):
 
 
 def _compare_ols_results(model1, model2):
-    assert(type(model1) == type(model2))
+    tm.assert_isinstance(model1, type(model2))
 
     if hasattr(model1, '_window_type'):
         _compare_moving_ols(model1, model2)
@@ -75,7 +77,7 @@ class TestOLS(BaseTest):
             pass
 
         if not _have_statsmodels:
-            raise nose.SkipTest
+            raise nose.SkipTest("no statsmodels")
 
     def testOLSWithDatasets_ccard(self):
         self.checkDataSet(sm.datasets.ccard.load(), skip_moving=True)
@@ -97,8 +99,10 @@ class TestOLS(BaseTest):
 
     def testWLS(self):
         # WLS centered SS changed (fixed) in 0.5.0
-        if sm.version.version < '0.5.0':
-            raise nose.SkipTest
+        sm_version = sm.version.version
+        if sm_version < LooseVersion('0.5.0'):
+            raise nose.SkipTest("WLS centered SS not fixed in statsmodels"
+                                " version {0}".format(sm_version))
 
         X = DataFrame(np.random.randn(30, 4), columns=['A', 'B', 'C', 'D'])
         Y = Series(np.random.randn(30))
@@ -194,7 +198,7 @@ class TestOLS(BaseTest):
             date = index[i]
 
             x_iter = {}
-            for k, v in x.iteritems():
+            for k, v in compat.iteritems(x):
                 x_iter[k] = v.truncate(before=prior_date, after=date)
             y_iter = y.truncate(before=prior_date, after=date)
 
@@ -258,7 +262,7 @@ class TestOLSMisc(unittest.TestCase):
     @classmethod
     def setupClass(cls):
         if not _have_statsmodels:
-            raise nose.SkipTest
+            raise nose.SkipTest("no statsmodels")
 
     def test_f_test(self):
         x = tm.makeTimeDataFrame()
@@ -365,7 +369,7 @@ class TestOLSMisc(unittest.TestCase):
         y = lp.pop('ItemA')
         model = ols(y=y, x=lp, entity_effects=True, window=20)
         self.assert_(notnull(model.beta.values).all())
-        self.assert_(isinstance(model, PanelOLS))
+        tm.assert_isinstance(model, PanelOLS)
         model.summary
 
     def test_series_rhs(self):
@@ -374,6 +378,9 @@ class TestOLSMisc(unittest.TestCase):
         model = ols(y=y, x=x)
         expected = ols(y=y, x={'x': x})
         assert_series_equal(model.beta, expected.beta)
+
+        # GH 5233/5250
+        assert_series_equal(model.y_predict, model.predict(x=x))
 
     def test_various_attributes(self):
         # just make sure everything "works". test correctness elsewhere
@@ -386,7 +393,7 @@ class TestOLSMisc(unittest.TestCase):
 
         for attr in series_attrs:
             value = getattr(model, attr)
-            self.assert_(isinstance(value, Series))
+            tm.assert_isinstance(value, Series)
 
         # works
         model._results
@@ -527,7 +534,7 @@ class TestPanelOLS(BaseTest):
 
         stack_y = y.stack()
         stack_x = DataFrame(dict((k, v.stack())
-                                 for k, v in x.iterkv()))
+                                 for k, v in compat.iteritems(x)))
 
         weights = x.std('items')
         stack_weights = weights.stack()
@@ -661,7 +668,10 @@ class TestPanelOLS(BaseTest):
     def testRollingWithEntityCluster(self):
         self.checkMovingOLS(self.panel_x, self.panel_y,
                             cluster='entity')
-
+    def testUnknownClusterRaisesValueError(self):
+        assertRaisesRegexp(ValueError, "Unrecognized cluster.*ridiculous",
+                           self.checkMovingOLS, self.panel_x, self.panel_y,
+                                               cluster='ridiculous')
     def testRollingWithTimeEffectsAndEntityCluster(self):
         self.checkMovingOLS(self.panel_x, self.panel_y,
                             time_effects=True, cluster='entity')
@@ -687,6 +697,10 @@ class TestPanelOLS(BaseTest):
         self.checkNonPooled(y=self.panel_y, x=self.panel_x)
         self.checkNonPooled(y=self.panel_y, x=self.panel_x,
                             window_type='rolling', window=25, min_periods=10)
+    def testUnknownWindowType(self):
+        assertRaisesRegexp(ValueError, "window.*ridiculous",
+                           self.checkNonPooled, y=self.panel_y, x=self.panel_x,
+                           window_type='ridiculous', window=25, min_periods=10)
 
     def checkNonPooled(self, x, y, **kwds):
         # For now, just check that it doesn't crash
@@ -713,7 +727,7 @@ class TestPanelOLS(BaseTest):
             date = index[i]
 
             x_iter = {}
-            for k, v in x.iteritems():
+            for k, v in compat.iteritems(x):
                 x_iter[k] = v.truncate(before=prior_date, after=date)
             y_iter = y.truncate(before=prior_date, after=date)
 

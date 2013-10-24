@@ -9,11 +9,15 @@ from numpy import nan
 import numpy as np
 import random
 
-from pandas import *
+from pandas.compat import range, lrange, lzip, zip
+from pandas import compat
 from pandas.tseries.index import DatetimeIndex
 from pandas.tools.merge import merge, concat, ordered_merge, MergeError
 from pandas.util.testing import (assert_frame_equal, assert_series_equal,
-                                 assert_almost_equal, rands)
+                                 assert_almost_equal, rands,
+                                 makeCustomDataframe as mkdf,
+                                 assertRaisesRegexp)
+from pandas import isnull, DataFrame, Index, MultiIndex, Panel, Series, date_range
 import pandas.algos as algos
 import pandas.util.testing as tm
 
@@ -25,7 +29,7 @@ JOIN_TYPES = ['inner', 'outer', 'left', 'right']
 
 
 def get_test_data(ngroups=NGROUPS, n=N):
-    unique_groups = range(ngroups)
+    unique_groups = lrange(ngroups)
     arr = np.asarray(np.tile(unique_groups, n // ngroups))
 
     if len(arr) < n:
@@ -227,6 +231,33 @@ class TestMerge(unittest.TestCase):
         source_copy['A'] = 0
         self.assertRaises(Exception, target.join, source_copy, on='A')
 
+    def test_join_on_fails_with_different_right_index(self):
+        with tm.assertRaises(ValueError):
+            df = DataFrame({'a': tm.choice(['m', 'f'], size=3),
+                            'b': np.random.randn(3)})
+            df2 = DataFrame({'a': tm.choice(['m', 'f'], size=10),
+                             'b': np.random.randn(10)},
+                            index=tm.makeCustomIndex(10, 2))
+            merge(df, df2, left_on='a', right_index=True)
+
+    def test_join_on_fails_with_different_left_index(self):
+        with tm.assertRaises(ValueError):
+            df = DataFrame({'a': tm.choice(['m', 'f'], size=3),
+                            'b': np.random.randn(3)},
+                           index=tm.makeCustomIndex(10, 2))
+            df2 = DataFrame({'a': tm.choice(['m', 'f'], size=10),
+                             'b': np.random.randn(10)})
+            merge(df, df2, right_on='b', left_index=True)
+
+    def test_join_on_fails_with_different_column_counts(self):
+        with tm.assertRaises(ValueError):
+            df = DataFrame({'a': tm.choice(['m', 'f'], size=3),
+                            'b': np.random.randn(3)})
+            df2 = DataFrame({'a': tm.choice(['m', 'f'], size=10),
+                             'b': np.random.randn(10)},
+                            index=tm.makeCustomIndex(10, 2))
+            merge(df, df2, right_on='a', left_on=['a', 'b'])
+
     def test_join_on_pass_vector(self):
         expected = self.target.join(self.source, on='C')
         del expected['C']
@@ -313,6 +344,7 @@ class TestMerge(unittest.TestCase):
         df2['float'] = 1.
 
         for kind in JOIN_TYPES:
+
             joined = df1.join(df2, how=kind)
             expected = _join_by_hand(df1, df2, how=kind)
             assert_frame_equal(joined, expected)
@@ -554,8 +586,8 @@ class TestMerge(unittest.TestCase):
         assert_almost_equal(merged['value_y'], [6, np.nan, 5, 8, 5, 8, 7])
 
     def test_merge_nocopy(self):
-        left = DataFrame({'a': 0, 'b': 1}, index=range(10))
-        right = DataFrame({'c': 'foo', 'd': 'bar'}, index=range(10))
+        left = DataFrame({'a': 0, 'b': 1}, index=lrange(10))
+        right = DataFrame({'c': 'foo', 'd': 'bar'}, index=lrange(10))
 
         merged = merge(left, right, left_index=True,
                        right_index=True, copy=False)
@@ -581,15 +613,15 @@ class TestMerge(unittest.TestCase):
 
         # smoke test
         joined = left.join(right, on='key', sort=False)
-        self.assert_(np.array_equal(joined.index, range(4)))
+        self.assert_(np.array_equal(joined.index, lrange(4)))
 
     def test_intelligently_handle_join_key(self):
         # #733, be a bit more 1337 about not returning unconsolidated DataFrame
 
         left = DataFrame({'key': [1, 1, 2, 2, 3],
-                          'value': range(5)}, columns=['value', 'key'])
+                          'value': lrange(5)}, columns=['value', 'key'])
         right = DataFrame({'key': [1, 1, 2, 3, 4, 5],
-                           'rvalue': range(6)})
+                           'rvalue': lrange(6)})
 
         joined = merge(left, right, on='key', how='outer')
         expected = DataFrame({'key': [1, 1, 1, 1, 2, 2, 3, 4, 5.],
@@ -603,8 +635,8 @@ class TestMerge(unittest.TestCase):
 
     def test_handle_join_key_pass_array(self):
         left = DataFrame({'key': [1, 1, 2, 2, 3],
-                          'value': range(5)}, columns=['value', 'key'])
-        right = DataFrame({'rvalue': range(6)})
+                          'value': lrange(5)}, columns=['value', 'key'])
+        right = DataFrame({'rvalue': lrange(6)})
         key = np.array([1, 1, 2, 3, 4, 5])
 
         merged = merge(left, right, left_on='key', right_on=key, how='outer')
@@ -614,8 +646,8 @@ class TestMerge(unittest.TestCase):
         self.assert_(merged['key'].notnull().all())
         self.assert_(merged2['key'].notnull().all())
 
-        left = DataFrame({'value': range(5)}, columns=['value'])
-        right = DataFrame({'rvalue': range(6)})
+        left = DataFrame({'value': lrange(5)}, columns=['value'])
+        right = DataFrame({'rvalue': lrange(6)})
         lkey = np.array([1, 1, 2, 2, 3])
         rkey = np.array([1, 1, 2, 3, 4, 5])
 
@@ -623,8 +655,8 @@ class TestMerge(unittest.TestCase):
         self.assert_(np.array_equal(merged['key_0'],
                                     np.array([1, 1, 1, 1, 2, 2, 3, 4, 5])))
 
-        left = DataFrame({'value': range(3)})
-        right = DataFrame({'rvalue': range(6)})
+        left = DataFrame({'value': lrange(3)})
+        right = DataFrame({'rvalue': lrange(6)})
 
         key = np.array([0, 1, 1, 2, 2, 3])
         merged = merge(left, right, left_index=True, right_on=key, how='outer')
@@ -737,6 +769,30 @@ class TestMerge(unittest.TestCase):
         assert_frame_equal(result, expected)
 
 
+    def test_append_dtype_coerce(self):
+
+        # GH 4993
+        # appending with datetime will incorrectly convert datetime64
+        import datetime as dt
+        from pandas import NaT
+
+        df1 = DataFrame(index=[1,2], data=[dt.datetime(2013,1,1,0,0),
+                                           dt.datetime(2013,1,2,0,0)],
+                        columns=['start_time'])
+        df2 = DataFrame(index=[4,5], data=[[dt.datetime(2013,1,3,0,0),
+                                            dt.datetime(2013,1,3,6,10)],
+                                           [dt.datetime(2013,1,4,0,0),
+                                            dt.datetime(2013,1,4,7,10)]],
+                        columns=['start_time','end_time'])
+
+        expected = concat([
+            Series([NaT,NaT,dt.datetime(2013,1,3,6,10),dt.datetime(2013,1,4,7,10)],name='end_time'),
+            Series([dt.datetime(2013,1,1,0,0),dt.datetime(2013,1,2,0,0),dt.datetime(2013,1,3,0,0),dt.datetime(2013,1,4,0,0)],name='start_time'),
+            ],axis=1)
+        result = df1.append(df2,ignore_index=True)
+        assert_frame_equal(result, expected)
+
+
     def test_overlapping_columns_error_message(self):
         # #2649
         df = DataFrame({'key': [1, 2, 3],
@@ -786,7 +842,7 @@ class TestMergeMulti(unittest.TestCase):
     def test_merge_on_multikey(self):
         joined = self.data.join(self.to_join, on=['key1', 'key2'])
 
-        join_key = Index(zip(self.data['key1'], self.data['key2']))
+        join_key = Index(lzip(self.data['key1'], self.data['key2']))
         indexer = self.to_join.index.get_indexer(join_key)
         ex_values = self.to_join.values.take(indexer, axis=0)
         ex_values[indexer == -1] = np.nan
@@ -808,7 +864,7 @@ class TestMergeMulti(unittest.TestCase):
     def test_compress_group_combinations(self):
 
         # ~ 40000000 possible unique groups
-        key1 = np.array([rands(10) for _ in xrange(10000)], dtype='O')
+        key1 = np.array([rands(10) for _ in range(10000)], dtype='O')
         key1 = np.tile(key1, 2)
         key2 = key1[::-1]
 
@@ -1021,7 +1077,7 @@ def _join_by_hand(a, b, how='left'):
 
     result_columns = a.columns.append(b.columns)
 
-    for col, s in b_re.iteritems():
+    for col, s in compat.iteritems(b_re):
         a_re[col] = s
     return a_re.reindex(columns=result_columns)
 
@@ -1077,7 +1133,7 @@ class TestConcatenate(unittest.TestCase):
         self.assert_(appended is not self.frame)
 
         # overlap
-        self.assertRaises(Exception, self.frame.append, self.frame,
+        self.assertRaises(ValueError, self.frame.append, self.frame,
                           verify_integrity=True)
 
     def test_append_length0_frame(self):
@@ -1296,7 +1352,7 @@ class TestConcatenate(unittest.TestCase):
                           columns=Index(['A', 'B', 'C'], name='exp'))
         result = concat([frame, frame], keys=[0, 1], names=['iteration'])
 
-        self.assertEqual(result.index.names, ['iteration'] + index.names)
+        self.assertEqual(result.index.names, ('iteration',) + index.names)
         tm.assert_frame_equal(result.ix[0], frame)
         tm.assert_frame_equal(result.ix[1], frame)
         self.assertEqual(result.index.nlevels, 3)
@@ -1327,14 +1383,14 @@ class TestConcatenate(unittest.TestCase):
                         keys=[('foo', 'one'), ('foo', 'two'),
                               ('baz', 'one'), ('baz', 'two')],
                         levels=levels)
-        self.assertEqual(result.index.names, [None] * 3)
+        self.assertEqual(result.index.names, (None,) * 3)
 
         # no levels
         result = concat([df, df2, df, df2],
                         keys=[('foo', 'one'), ('foo', 'two'),
                               ('baz', 'one'), ('baz', 'two')],
                         names=['first', 'second'])
-        self.assertEqual(result.index.names, ['first', 'second'] + [None])
+        self.assertEqual(result.index.names, ('first', 'second') + (None,))
         self.assert_(np.array_equal(result.index.levels[0], ['baz', 'foo']))
 
     def test_concat_keys_levels_no_overlap(self):
@@ -1360,7 +1416,9 @@ class TestConcatenate(unittest.TestCase):
                         names=['lvl0', 'lvl1'])
 
         exp = concat([a, b], keys=['key0', 'key1'], names=['lvl0'])
-        exp.index.names[1] = 'lvl1'
+        names = list(exp.index.names)
+        names[1] = 'lvl1'
+        exp.index.set_names(names, inplace=True)
 
         tm.assert_frame_equal(result, exp)
         self.assertEqual(result.index.names, exp.index.names)
@@ -1388,7 +1446,69 @@ class TestConcatenate(unittest.TestCase):
         df2 = DataFrame(np.random.randn(1, 4), index=['b'])
         result = concat(
             [df, df2], keys=['one', 'two'], names=['first', 'second'])
-        self.assertEqual(result.index.names, ['first', 'second'])
+        self.assertEqual(result.index.names, ('first', 'second'))
+
+    def test_dups_index(self):
+        # GH 4771
+
+        # single dtypes
+        df = DataFrame(np.random.randint(0,10,size=40).reshape(10,4),columns=['A','A','C','C'])
+
+        result = concat([df,df],axis=1)
+        assert_frame_equal(result.iloc[:,:4],df)
+        assert_frame_equal(result.iloc[:,4:],df)
+
+        result = concat([df,df],axis=0)
+        assert_frame_equal(result.iloc[:10],df)
+        assert_frame_equal(result.iloc[10:],df)
+
+        # multi dtypes
+        df = concat([DataFrame(np.random.randn(10,4),columns=['A','A','B','B']),
+                     DataFrame(np.random.randint(0,10,size=20).reshape(10,2),columns=['A','C'])],
+                    axis=1)
+
+        result = concat([df,df],axis=1)
+        assert_frame_equal(result.iloc[:,:6],df)
+        assert_frame_equal(result.iloc[:,6:],df)
+
+        result = concat([df,df],axis=0)
+        assert_frame_equal(result.iloc[:10],df)
+        assert_frame_equal(result.iloc[10:],df)
+
+        # append
+        result = df.iloc[0:8,:].append(df.iloc[8:])
+        assert_frame_equal(result, df)
+
+        result = df.iloc[0:8,:].append(df.iloc[8:9]).append(df.iloc[9:10])
+        assert_frame_equal(result, df)
+
+        expected = concat([df,df],axis=0)
+        result = df.append(df)
+        assert_frame_equal(result, expected)
+
+    def test_join_dups(self):
+
+        # joining dups
+        df = concat([DataFrame(np.random.randn(10,4),columns=['A','A','B','B']),
+                     DataFrame(np.random.randint(0,10,size=20).reshape(10,2),columns=['A','C'])],
+                    axis=1)
+
+        expected = concat([df,df],axis=1)
+        result = df.join(df,rsuffix='_2')
+        result.columns = expected.columns
+        assert_frame_equal(result, expected)
+
+        # GH 4975, invalid join on dups
+        w = DataFrame(np.random.randn(4,2), columns=["x", "y"])
+        x = DataFrame(np.random.randn(4,2), columns=["x", "y"])
+        y = DataFrame(np.random.randn(4,2), columns=["x", "y"])
+        z = DataFrame(np.random.randn(4,2), columns=["x", "y"])
+
+        dta = x.merge(y, left_index=True, right_index=True).merge(z, left_index=True, right_index=True, how="outer")
+        dta = dta.merge(w, left_index=True, right_index=True)
+        expected = concat([x,y,z,w],axis=1)
+        expected.columns=['x_x','y_x','x_y','y_y','x_x','y_x','x_y','y_y']
+        assert_frame_equal(dta,expected)
 
     def test_handle_empty_objects(self):
         df = DataFrame(np.random.randn(10, 4), columns=list('abcd'))
@@ -1468,7 +1588,7 @@ class TestConcatenate(unittest.TestCase):
 
         data_dict = {}
         for p in panels:
-            data_dict.update(p.iterkv())
+            data_dict.update(compat.iteritems(p))
 
         joined = panels[0].join(panels[1:], how='inner')
         expected = Panel.from_dict(data_dict, intersect=True)
@@ -1612,7 +1732,7 @@ class TestConcatenate(unittest.TestCase):
 
         s2.name = None
         result = concat([s, s2], axis=1)
-        self.assertTrue(np.array_equal(result.columns, range(2)))
+        self.assertTrue(np.array_equal(result.columns, lrange(2)))
 
         # must reindex, #2603
         s = Series(randn(3), index=['c', 'a', 'b'], name='A')
@@ -1681,6 +1801,20 @@ class TestConcatenate(unittest.TestCase):
         expected.columns=['same name', 'same name']
         assert_frame_equal(result, expected)
 
+    def test_concat_bug_3602(self):
+
+        # GH 3602, duplicate columns
+        df1 = DataFrame({'firmNo' : [0,0,0,0], 'stringvar' : ['rrr', 'rrr', 'rrr', 'rrr'], 'prc' : [6,6,6,6] })
+        df2 = DataFrame({'misc' : [1,2,3,4], 'prc' : [6,6,6,6], 'C' : [9,10,11,12]})
+        expected = DataFrame([[0,6,'rrr',9,1,6],
+                              [0,6,'rrr',10,2,6],
+                              [0,6,'rrr',11,3,6],
+                              [0,6,'rrr',12,4,6]])
+        expected.columns = ['firmNo','prc','stringvar','C','misc','prc']
+
+        result = concat([df1,df2],axis=1)
+        assert_frame_equal(result,expected)
+
     def test_concat_series_axis1_same_names_ignore_index(self):
         dates = date_range('01-Jan-2013', '01-Jan-2014', freq='MS')[0:-1]
         s1 = Series(randn(len(dates)), index=dates, name='value')
@@ -1688,6 +1822,23 @@ class TestConcatenate(unittest.TestCase):
 
         result = concat([s1, s2], axis=1, ignore_index=True)
         self.assertTrue(np.array_equal(result.columns, [0, 1]))
+
+    def test_concat_invalid_first_argument(self):
+        df1 = mkdf(10, 2)
+        df2 = mkdf(10, 2)
+        self.assertRaises(AssertionError, concat, df1, df2)
+
+        # generator ok though
+        concat(DataFrame(np.random.rand(5,5)) for _ in range(3))
+
+    def test_concat_mixed_types_fails(self):
+        df = DataFrame(randn(10, 1))
+
+        with tm.assertRaisesRegexp(TypeError, "Cannot concatenate.+"):
+            concat([df[0], df], axis=1)
+
+        with tm.assertRaisesRegexp(TypeError, "Cannot concatenate.+"):
+            concat([df, df[0]], axis=1)
 
 class TestOrderedMerge(unittest.TestCase):
 
@@ -1740,6 +1891,5 @@ class TestOrderedMerge(unittest.TestCase):
         self.assert_(result['group'].notnull().all())
 
 if __name__ == '__main__':
-    import nose
     nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb', '--pdb-failure'],
                    exit=False)

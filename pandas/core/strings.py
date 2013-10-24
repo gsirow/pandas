@@ -1,8 +1,10 @@
 import numpy as np
 
-from itertools import izip
-from pandas.core.common import isnull
+from pandas.compat import zip
+from pandas.core.common import isnull, _values_from_object
 from pandas.core.series import Series
+from pandas.core.frame import DataFrame
+import pandas.compat as compat
 import re
 import pandas.lib as lib
 
@@ -50,7 +52,7 @@ def str_cat(arr, others=None, sep=None, na_rep=None):
 
             notmask = -na_mask
 
-            tuples = izip(*[x[notmask] for x in arrays])
+            tuples = zip(*[x[notmask] for x in arrays])
             cats = [sep.join(tup) for tup in tuples]
 
             result[notmask] = cats
@@ -90,6 +92,8 @@ def _na_map(f, arr, na_result=np.nan):
 
 
 def _map(f, arr, na_mask=False, na_value=np.nan):
+    if isinstance(arr, Series):
+        arr = arr.values
     if not isinstance(arr, np.ndarray):
         arr = np.asarray(arr, dtype=object)
     if na_mask:
@@ -282,18 +286,20 @@ def str_repeat(arr, repeats):
     if np.isscalar(repeats):
         def rep(x):
             try:
-                return str.__mul__(x, repeats)
+                return compat.binary_type.__mul__(x, repeats)
             except TypeError:
-                return unicode.__mul__(x, repeats)
+                return compat.text_type.__mul__(x, repeats)
+
         return _na_map(rep, arr)
     else:
         def rep(x, r):
             try:
-                return str.__mul__(x, r)
+                return compat.binary_type.__mul__(x, r)
             except TypeError:
-                return unicode.__mul__(x, r)
+                return compat.text_type.__mul__(x, r)
+
         repeats = np.asarray(repeats, dtype=object)
-        result = lib.vec_binop(arr, repeats, rep)
+        result = lib.vec_binop(_values_from_object(arr), repeats, rep)
         return result
 
 
@@ -323,6 +329,59 @@ def str_match(arr, pat, flags=0):
 
     return _na_map(f, arr)
 
+def str_extract(arr, pat, flags=0):
+    """
+    Find groups in each string (from beginning) using passed regular expression
+
+    Parameters
+    ----------
+    pat : string
+        Pattern or regular expression
+    flags : int, default 0 (no flags)
+        re module flags, e.g. re.IGNORECASE
+
+    Returns
+    -------
+    extracted groups : Series (one group) or DataFrame (multiple groups)
+
+
+    Notes
+    -----
+    Compare to the string method match, which returns re.match objects.
+    """
+    regex = re.compile(pat, flags=flags)
+
+    # just to be safe, check this
+    if regex.groups == 0:
+        raise ValueError("This pattern contains no groups to capture.")
+    elif regex.groups == 1:
+        def f(x):
+            if not isinstance(x, compat.string_types):
+                return None
+            m = regex.match(x)
+            if m:
+                return m.groups()[0] # may be None
+            else:
+                return None
+    else:
+        empty_row = Series(regex.groups*[None])
+        def f(x):
+            if not isinstance(x, compat.string_types):
+                return empty_row
+            m = regex.match(x)
+            if m:
+                return Series(list(m.groups())) # may contain None
+            else:
+                return empty_row
+    result = arr.apply(f)
+    result.replace({None: np.nan}, inplace=True)
+    if regex.groups > 1:
+        result = DataFrame(result) # Don't rely on the wrapper; name columns.
+        names = dict(zip(regex.groupindex.values(), regex.groupindex.keys()))
+        result.columns = [names.get(1 + i, i) for i in range(regex.groups)]
+    else:
+        result.name = regex.groupindex.get(0)
+    return result
 
 def str_join(arr, sep):
     """
@@ -559,7 +618,7 @@ def str_get(arr, i):
     -------
     items : array
     """
-    f = lambda x: x[i]
+    f = lambda x: x[i] if len(x) > i else np.nan
     return _na_map(f, arr)
 
 
@@ -661,9 +720,21 @@ class StringMethods(object):
         else:
             return self.get(key)
 
+    def __iter__(self):
+        i = 0
+        g = self.get(i)
+        while g.notnull().any():
+            yield g
+            i += 1
+            g = self.get(i)
+
     def _wrap_result(self, result):
-        return Series(result, index=self.series.index,
-                      name=self.series.name)
+        assert result.ndim < 3
+        if result.ndim == 1:
+            return Series(result, index=self.series.index,
+                          name=self.series.name)
+        else:
+            return DataFrame(result, index=self.series.index)
 
     @copy(str_cat)
     def cat(self, others=None, sep=None, na_rep=None):
@@ -692,8 +763,9 @@ class StringMethods(object):
         return self._wrap_result(result)
 
     @copy(str_replace)
-    def replace(self, pat, repl, n=-1, case=True):
-        result = str_replace(self.series, pat, repl, n=n, case=case)
+    def replace(self, pat, repl, n=-1, case=True, flags=0):
+        result = str_replace(self.series, pat, repl, n=n, case=case,
+                             flags=flags)
         return self._wrap_result(result)
 
     @copy(str_repeat)
@@ -750,6 +822,7 @@ class StringMethods(object):
     endswith = _pat_wrapper(str_endswith, na=True)
     findall = _pat_wrapper(str_findall, flags=True)
     match = _pat_wrapper(str_match, flags=True)
+    extract = _pat_wrapper(str_extract, flags=True)
 
     len = _noarg_wrapper(str_len)
     lower = _noarg_wrapper(str_lower)

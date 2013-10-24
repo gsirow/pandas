@@ -1,10 +1,14 @@
+import datetime
 import unittest
 
 import numpy as np
+from numpy.testing import assert_equal
 
-from pandas import DataFrame, Series
+import pandas
+from pandas import DataFrame, Series, Index, MultiIndex
 from pandas.tools.merge import concat
 from pandas.tools.pivot import pivot_table, crosstab
+from pandas.compat import range, u, product
 import pandas.util.testing as tm
 
 
@@ -38,7 +42,7 @@ class TestPivotTable(unittest.TestCase):
         pivot_table(self.data, values='D', rows=rows)
 
         if len(rows) > 1:
-            self.assertEqual(table.index.names, rows)
+            self.assertEqual(table.index.names, tuple(rows))
         else:
             self.assertEqual(table.index.name, rows[0])
 
@@ -49,6 +53,44 @@ class TestPivotTable(unittest.TestCase):
 
         expected = self.data.groupby(rows + [cols])['D'].agg(np.mean).unstack()
         tm.assert_frame_equal(table, expected)
+
+    def test_pivot_table_nocols(self):
+        df = DataFrame({'rows': ['a', 'b', 'c'],
+                        'cols': ['x', 'y', 'z'],
+                        'values': [1,2,3]})
+        rs = df.pivot_table(cols='cols', aggfunc=np.sum)
+        xp = df.pivot_table(rows='cols', aggfunc=np.sum).T
+        tm.assert_frame_equal(rs, xp)
+
+        rs = df.pivot_table(cols='cols', aggfunc={'values': 'mean'})
+        xp = df.pivot_table(rows='cols', aggfunc={'values': 'mean'}).T
+        tm.assert_frame_equal(rs, xp)
+
+    def test_pivot_table_dropna(self):
+        df = DataFrame({'amount': {0: 60000, 1: 100000, 2: 50000, 3: 30000},
+                        'customer': {0: 'A', 1: 'A', 2: 'B', 3: 'C'},
+                        'month': {0: 201307, 1: 201309, 2: 201308, 3: 201310},
+                        'product': {0: 'a', 1: 'b', 2: 'c', 3: 'd'},
+                        'quantity': {0: 2000000, 1: 500000, 2: 1000000, 3: 1000000}})
+        pv_col = df.pivot_table('quantity', 'month', ['customer', 'product'], dropna=False)
+        pv_ind = df.pivot_table('quantity', ['customer', 'product'], 'month', dropna=False)
+
+        m = MultiIndex.from_tuples([(u('A'), u('a')),
+                                    (u('A'), u('b')),
+                                    (u('A'), u('c')),
+                                    (u('A'), u('d')),
+                                    (u('B'), u('a')),
+                                    (u('B'), u('b')),
+                                    (u('B'), u('c')),
+                                    (u('B'), u('d')),
+                                    (u('C'), u('a')),
+                                    (u('C'), u('b')),
+                                    (u('C'), u('c')),
+                                    (u('C'), u('d'))])
+
+        assert_equal(pv_col.columns.values, m.values)
+        assert_equal(pv_ind.index.values, m.values)
+
 
     def test_pass_array(self):
         result = self.data.pivot_table('D', rows=self.data.A, cols=self.data.C)
@@ -68,6 +110,26 @@ class TestPivotTable(unittest.TestCase):
         table = pivot_table(self.data, rows=rows, cols=cols)
         expected = self.data.groupby(rows + [cols]).agg(np.mean).unstack()
         tm.assert_frame_equal(table, expected)
+
+    def test_pivot_dtypes(self):
+
+        # can convert dtypes
+        f = DataFrame({'a' : ['cat', 'bat', 'cat', 'bat'], 'v' : [1,2,3,4], 'i' : ['a','b','a','b']})
+        self.assert_(f.dtypes['v'] == 'int64')
+
+        z = pivot_table(f, values='v', rows=['a'], cols=['i'], fill_value=0, aggfunc=np.sum)
+        result = z.get_dtype_counts()
+        expected = Series(dict(int64 = 2))
+        tm.assert_series_equal(result, expected)
+
+        # cannot convert dtypes
+        f = DataFrame({'a' : ['cat', 'bat', 'cat', 'bat'], 'v' : [1.5,2.5,3.5,4.5], 'i' : ['a','b','a','b']})
+        self.assert_(f.dtypes['v'] == 'float64')
+
+        z = pivot_table(f, values='v', rows=['a'], cols=['i'], fill_value=0, aggfunc=np.mean)
+        result = z.get_dtype_counts()
+        expected = Series(dict(float64 = 2))
+        tm.assert_series_equal(result, expected)
 
     def test_pivot_multi_values(self):
         result = pivot_table(self.data, values=['D', 'E'],
@@ -96,12 +158,24 @@ class TestPivotTable(unittest.TestCase):
         expected = concat([means, stds], keys=['mean', 'std'], axis=1)
         tm.assert_frame_equal(result, expected)
 
+    def test_pivot_index_with_nan(self):
+        # GH 3588
+        nan = np.nan
+        df = DataFrame({"a":['R1', 'R2', nan, 'R4'], 'b':["C1", "C2", "C3" , "C4"], "c":[10, 15, nan , 20]})
+        result = df.pivot('a','b','c')
+        expected = DataFrame([[nan,nan,nan,nan],[nan,10,nan,nan],
+                              [nan,nan,nan,nan],[nan,nan,15,20]],
+                             index = Index(['R1','R2',nan,'R4'],name='a'),
+                             columns = Index(['C1','C2','C3','C4'],name='b'))
+        tm.assert_frame_equal(result, expected)
+
     def test_margins(self):
         def _check_output(res, col, rows=['A', 'B'], cols=['C']):
             cmarg = res['All'][:-1]
             exp = self.data.groupby(rows)[col].mean()
             tm.assert_series_equal(cmarg, exp)
 
+            res.sortlevel(inplace=True)
             rmarg = res.xs(('All', ''))[:-1]
             exp = self.data.groupby(cols)[col].mean()
             tm.assert_series_equal(rmarg, exp)
@@ -138,20 +212,17 @@ class TestPivotTable(unittest.TestCase):
         # no rows
         rtable = self.data.pivot_table(cols=['AA', 'BB'], margins=True,
                                        aggfunc=np.mean)
-        self.assert_(isinstance(rtable, Series))
+        tm.assert_isinstance(rtable, Series)
         for item in ['DD', 'EE', 'FF']:
             gmarg = table[item]['All', '']
             self.assertEqual(gmarg, self.data[item].mean())
 
     def test_pivot_integer_columns(self):
         # caused by upstream bug in unstack
-        from pandas.util.compat import product
-        import datetime
-        import pandas
 
         d = datetime.date.min
         data = list(product(['foo', 'bar'], ['A', 'B', 'C'], ['x1', 'x2'],
-                            [d + datetime.timedelta(i) for i in xrange(20)], [1.0]))
+                            [d + datetime.timedelta(i) for i in range(20)], [1.0]))
         df = pandas.DataFrame(data)
         table = df.pivot_table(values=4, rows=[0, 1, 3], cols=[2])
 
@@ -175,9 +246,6 @@ class TestPivotTable(unittest.TestCase):
         tm.assert_frame_equal(table, expected)
 
     def test_pivot_columns_lexsorted(self):
-        import datetime
-        import numpy as np
-        import pandas
 
         n = 10000
 
@@ -228,6 +296,28 @@ class TestPivotTable(unittest.TestCase):
         result = self.data.pivot_table(rows='A', cols='B', aggfunc=f)
 
         tm.assert_frame_equal(result, expected)
+
+    def test_margins_no_values_no_cols(self):
+        # Regression test on pivot table: no values or cols passed.
+        result = self.data[['A', 'B']].pivot_table(rows=['A', 'B'], aggfunc=len, margins=True)
+        result_list = result.tolist()
+        self.assertEqual(sum(result_list[:-1]), result_list[-1])
+
+    def test_margins_no_values_two_rows(self):
+        # Regression test on pivot table: no values passed but rows are a multi-index
+        result = self.data[['A', 'B', 'C']].pivot_table(rows=['A', 'B'], cols='C', aggfunc=len, margins=True)
+        self.assertEqual(result.All.tolist(), [3.0, 1.0, 4.0, 3.0, 11.0])
+
+    def test_margins_no_values_one_row_one_col(self):
+        # Regression test on pivot table: no values passed but row and col defined
+        result = self.data[['A', 'B']].pivot_table(rows='A', cols='B', aggfunc=len, margins=True)
+        self.assertEqual(result.All.tolist(), [4.0, 7.0, 11.0])
+
+    def test_margins_no_values_two_row_two_cols(self):
+        # Regression test on pivot table: no values passed but rows and cols are multi-indexed
+        self.data['D'] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k']
+        result = self.data[['A', 'B', 'C', 'D']].pivot_table(rows=['A', 'B'], cols=['C', 'D'], aggfunc=len, margins=True)
+        self.assertEqual(result.All.tolist(), [3.0, 1.0, 4.0, 3.0, 11.0])
 
 
 class TestCrosstab(unittest.TestCase):
@@ -298,7 +388,7 @@ class TestCrosstab(unittest.TestCase):
         result = crosstab(a, [b, c], rownames=['a'], colnames=('b', 'c'),
                           margins=True)
 
-        self.assertEqual(result.index.names, ['a'])
+        self.assertEqual(result.index.names, ('a',))
         self.assertEqual(result.columns.names, ['b', 'c'])
 
         all_cols = result['All', '']
@@ -329,6 +419,16 @@ class TestCrosstab(unittest.TestCase):
         expected = df.pivot_table('values', rows=['foo', 'bar'], cols='baz',
                                   aggfunc=np.sum)
         tm.assert_frame_equal(table, expected)
+
+    def test_crosstab_dropna(self):
+        # GH 3820
+        a = np.array(['foo', 'foo', 'foo', 'bar', 'bar', 'foo', 'foo'], dtype=object)
+        b = np.array(['one', 'one', 'two', 'one', 'two', 'two', 'two'], dtype=object)
+        c = np.array(['dull', 'dull', 'dull', 'dull', 'dull', 'shiny', 'shiny'], dtype=object)
+        res = crosstab(a, [b, c], rownames=['a'], colnames=['b', 'c'], dropna=False)
+        m = MultiIndex.from_tuples([('one', 'dull'), ('one', 'shiny'),
+                                    ('two', 'dull'), ('two', 'shiny')])
+        assert_equal(res.columns.values, m.values)
 
 if __name__ == '__main__':
     import nose

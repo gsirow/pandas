@@ -76,7 +76,7 @@ cdef class _Offset:
     cpdef anchor(self, object start=None):
         if start is not None:
             self.start = start
-        self.ts = convert_to_tsobject(self.start)
+        self.ts = convert_to_tsobject(self.start, None, None)
         self._setup()
 
     cdef _setup(self):
@@ -84,6 +84,10 @@ cdef class _Offset:
 
     cpdef next(self):
         pass
+
+    cpdef __next__(self):
+        """wrapper around next"""
+        return self.next()
 
     cpdef prev(self):
         pass

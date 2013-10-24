@@ -110,6 +110,85 @@ scalar values and ``PeriodIndex`` for sequences of spans. Better support for
 irregular intervals with arbitrary start and end points are forth-coming in
 future releases.
 
+
+.. _timeseries.converting:
+
+Converting to Timestamps
+------------------------
+
+To convert a Series or list-like object of date-like objects e.g. strings,
+epochs, or a mixture, you can use the ``to_datetime`` function. When passed
+a Series, this returns a Series (with the same index), while a list-like
+is converted to a DatetimeIndex:
+
+.. ipython:: python
+
+    to_datetime(Series(['Jul 31, 2009', '2010-01-10', None]))
+
+    to_datetime(['2005/11/23', '2010.12.31'])
+
+If you use dates which start with the day first (i.e. European style),
+you can pass the ``dayfirst`` flag:
+
+.. ipython:: python
+
+    to_datetime(['04-01-2012 10:00'], dayfirst=True)
+
+    to_datetime(['14-01-2012', '01-14-2012'], dayfirst=True)
+
+.. warning::
+
+   You see in the above example that ``dayfirst`` isn't strict, so if a date
+   can't be parsed with the day being first it will be parsed as if
+   ``dayfirst`` were False.
+
+Invalid Data
+~~~~~~~~~~~~
+
+Pass ``coerce=True`` to convert invalid data to ``NaT`` (not a time):
+
+.. ipython:: python
+
+   to_datetime(['2009-07-31', 'asd'])
+
+   to_datetime(['2009-07-31', 'asd'], coerce=True)
+
+
+Take care, ``to_datetime`` may not act as you expect on mixed data:
+
+.. ipython:: python
+
+   to_datetime([1, '1'])
+
+Epoch Timestamps
+~~~~~~~~~~~~~~~~
+
+It's also possible to convert integer or float epoch times. The default unit
+for these is nanoseconds (since these are how Timestamps are stored). However,
+often epochs are stored in another ``unit`` which can be specified:
+
+Typical epoch stored units
+
+.. ipython:: python
+
+   to_datetime([1349720105, 1349806505, 1349892905,
+                1349979305, 1350065705], unit='s')
+
+   to_datetime([1349720105100, 1349720105200, 1349720105300,
+                1349720105400, 1349720105500 ], unit='ms')
+
+These *work*, but the results may be unexpected.
+
+.. ipython:: python
+
+   to_datetime([1])
+
+   to_datetime([1, 3.14], unit='s')
+
+.. note::
+
+   Epoch times will be rounded to the nearest nanosecond.
+
 .. _timeseries.daterange:
 
 Generating Ranges of Timestamps
@@ -175,7 +254,7 @@ dates outside of those dates if specified.
 .. _timeseries.datetimeindex:
 
 DatetimeIndex
-~~~~~~~~~~~~~
+-------------
 
 One of the main uses for ``DatetimeIndex`` is as an index for pandas objects.
 The ``DatetimeIndex`` class contains many timeseries related optimizations:
@@ -188,49 +267,6 @@ The ``DatetimeIndex`` class contains many timeseries related optimizations:
     very fast (important for fast data alignment)
   - Quick access to date fields via properties such as ``year``, ``month``, etc.
   - Regularization functions like ``snap`` and very fast ``asof`` logic
-
-``DatetimeIndex`` can be used like a regular index and offers all of its
-intelligent functionality like selection, slicing, etc.
-
-.. ipython:: python
-
-   rng = date_range(start, end, freq='BM')
-   ts = Series(randn(len(rng)), index=rng)
-   ts.index
-   ts[:5].index
-   ts[::2].index
-
-You can pass in dates and strings that parses to dates as indexing parameters:
-
-.. ipython:: python
-
-   ts['1/31/2011']
-
-   ts[datetime(2011, 12, 25):]
-
-   ts['10/31/2011':'12/31/2011']
-
-A ``truncate`` convenience function is provided that is equivalent to slicing:
-
-.. ipython:: python
-
-   ts.truncate(before='10/31/2011', after='12/31/2011')
-
-To provide convenience for accessing longer time series, you can also pass in
-the year or year and month as strings:
-
-.. ipython:: python
-
-   ts['2011']
-
-   ts['2011-6']
-
-Even complicated fancy indexing that breaks the DatetimeIndex's frequency
-regularity will result in a ``DatetimeIndex`` (but frequency is lost):
-
-.. ipython:: python
-
-   ts[[0, 2, 6]].index
 
 DatetimeIndex objects has all the basic functionality of regular Index objects
 and a smorgasbord of advanced timeseries-specific methods for easy frequency
@@ -245,6 +281,123 @@ processing.
     methods may have unexpected or incorrect behavior if the dates are
     unsorted. So please be careful.
 
+``DatetimeIndex`` can be used like a regular index and offers all of its
+intelligent functionality like selection, slicing, etc.
+
+.. ipython:: python
+
+   rng = date_range(start, end, freq='BM')
+   ts = Series(randn(len(rng)), index=rng)
+   ts.index
+   ts[:5].index
+   ts[::2].index
+
+Partial String Indexing
+~~~~~~~~~~~~~~~~~~~~~~~
+
+You can pass in dates and strings that parse to dates as indexing parameters:
+
+.. ipython:: python
+
+   ts['1/31/2011']
+
+   ts[datetime(2011, 12, 25):]
+
+   ts['10/31/2011':'12/31/2011']
+
+To provide convenience for accessing longer time series, you can also pass in
+the year or year and month as strings:
+
+.. ipython:: python
+
+   ts['2011']
+
+   ts['2011-6']
+
+This type of slicing will work on a DataFrame with a ``DateTimeIndex`` as well. Since the
+partial string selection is a form of label slicing, the endpoints **will be** included. This
+would include matching times on an included date. Here's an example:
+
+.. ipython:: python
+
+   dft = DataFrame(randn(100000,1),columns=['A'],index=date_range('20130101',periods=100000,freq='T'))
+   dft
+   dft['2013']
+
+This starts on the very first time in the month, and includes the last date & time for the month
+
+.. ipython:: python
+
+   dft['2013-1':'2013-2']
+
+This specifies a stop time **that includes all of the times on the last day**
+
+.. ipython:: python
+
+   dft['2013-1':'2013-2-28']
+
+This specifies an **exact** stop time (and is not the same as the above)
+
+.. ipython:: python
+
+   dft['2013-1':'2013-2-28 00:00:00']
+
+We are stopping on the included end-point as its part of the index
+
+.. ipython:: python
+
+   dft['2013-1-15':'2013-1-15 12:30:00']
+
+.. warning::
+
+   The following selection will raise a ``KeyError``; otherwise this selection methodology
+   would be inconsistent with other selection methods in pandas (as this is not a *slice*, nor does it
+   resolve to one)
+
+   .. code-block:: python
+
+      dft['2013-1-15 12:30:00']
+
+   To select a single row, use ``.loc``
+
+   .. ipython:: python
+
+      dft.loc['2013-1-15 12:30:00']
+
+
+Datetime Indexing
+~~~~~~~~~~~~~~~~~
+
+Indexing a ``DateTimeIndex`` with a partial string depends on the "accuracy" of the period, in other words how specific the interval is in relation to the frequency of the index. In contrast, indexing with datetime objects is exact, because the objects have exact meaning. These also follow the sematics of *including both endpoints*.
+
+These ``datetime`` objects  are specific ``hours, minutes,`` and ``seconds`` even though they were not explicity specified (they are ``0``).
+
+.. ipython:: python
+
+   dft[datetime(2013, 1, 1):datetime(2013,2,28)]
+
+With no defaults.
+
+.. ipython:: python
+
+   dft[datetime(2013, 1, 1, 10, 12, 0):datetime(2013, 2, 28, 10, 12, 0)]
+
+
+Truncating & Fancy Indexing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A ``truncate`` convenience function is provided that is equivalent to slicing:
+
+.. ipython:: python
+
+   ts.truncate(before='10/31/2011', after='12/31/2011')
+
+Even complicated fancy indexing that breaks the DatetimeIndex's frequency
+regularity will result in a ``DatetimeIndex`` (but frequency is lost):
+
+.. ipython:: python
+
+   ts[[0, 2, 6]].index
 
 .. _timeseries.offsets:
 
@@ -264,8 +417,10 @@ frequency increment. Specific offset logic like "month", "business day", or
 
     DateOffset, "Generic offset class, defaults to 1 calendar day"
     BDay, "business day (weekday)"
+    CDay, "custom business day (experimental)"
     Week, "one week, optionally anchored on a day of the week"
     WeekOfMonth, "the x-th day of the y-th week of each month"
+    LastWeekOfMonth, "the x-th day of the last week of each month"
     MonthEnd, "calendar month end"
     MonthBegin, "calendar month begin"
     BMonthEnd, "business month end"
@@ -274,10 +429,12 @@ frequency increment. Specific offset logic like "month", "business day", or
     QuarterBegin, "calendar quarter begin"
     BQuarterEnd, "business quarter end"
     BQuarterBegin, "business quarter begin"
+    FY5253Quarter, "retail (aka 52-53 week) quarter"
     YearEnd, "calendar year end"
     YearBegin, "calendar year begin"
     BYearEnd, "business year end"
     BYearBegin, "business year begin"
+    FY5253, "retail (aka 52-53 week) year"
     Hour, "one hour"
     Minute, "one minute"
     Second, "one second"
@@ -359,6 +516,54 @@ Another example is parameterizing ``YearEnd`` with the specific ending month:
 
 .. _timeseries.alias:
 
+Custom Business Days (Experimental)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``CDay`` or ``CustomBusinessDay`` class provides a parametric
+``BusinessDay`` class which can be used to create customized business day
+calendars which account for local holidays and local weekend conventions.
+
+.. ipython:: python
+
+    from pandas.tseries.offsets import CustomBusinessDay
+    # As an interesting example, let's look at Egypt where
+    # a Friday-Saturday weekend is observed.
+    weekmask_egypt = 'Sun Mon Tue Wed Thu'
+    # They also observe International Workers' Day so let's
+    # add that for a couple of years
+    holidays = ['2012-05-01', datetime(2013, 5, 1), np.datetime64('2014-05-01')]
+    bday_egypt = CustomBusinessDay(holidays=holidays, weekmask=weekmask_egypt)
+    dt = datetime(2013, 4, 30)
+    print(dt + 2 * bday_egypt)
+    dts = date_range(dt, periods=5, freq=bday_egypt).to_series()
+    print(dts)
+    print(Series(dts.weekday, dts).map(Series('Mon Tue Wed Thu Fri Sat Sun'.split())))
+
+.. note::
+
+    The frequency string 'C' is used to indicate that a CustomBusinessDay
+    DateOffset is used, it is important to note that since CustomBusinessDay is
+    a parameterised type, instances of CustomBusinessDay may differ and this is
+    not detectable from the 'C' frequency string. The user therefore needs to
+    ensure that the 'C' frequency string is used consistently within the user's
+    application.
+
+
+.. note::
+
+    This uses the ``numpy.busdaycalendar`` API introduced in Numpy 1.7 and
+    therefore requires Numpy 1.7.0 or newer.
+
+.. warning::
+
+    There are known problems with the timezone handling in Numpy 1.7 and users
+    should therefore use this **experimental(!)** feature with caution and at
+    their own risk.
+
+    To the extent that the ``datetime64`` and ``busdaycalendar`` APIs in Numpy
+    have to change to fix the timezone issues, the behaviour of the
+    ``CustomBusinessDay`` class may have to change in future versions.
+
 Offset Aliases
 ~~~~~~~~~~~~~~
 
@@ -371,6 +576,7 @@ frequencies. We will refer to these aliases as *offset aliases*
     :widths: 15, 100
 
     "B", "business day frequency"
+    "C", "custom business day frequency (experimental)"
     "D", "calendar day frequency"
     "W", "weekly frequency"
     "M", "month end frequency"
@@ -492,7 +698,7 @@ strongly recommended that you switch to using the new offset aliases.
     "A\@DEC", "BA\-DEC"
     "min", "T"
     "ms", "L"
-    "us": "U"
+    "us", "U"
 
 As you can see, legacy quarterly and annual frequencies are business quarter
 and business year ends. Please also note the legacy time rule for milliseconds
@@ -922,76 +1128,206 @@ TimeSeries, aligning the data on the UTC timestamps:
 
 .. _timeseries.timedeltas:
 
+In some cases, localize cannot determine the DST and non-DST hours when there are
+duplicates.  This often happens when reading files that simply duplicate the hours.
+The infer_dst argument in tz_localize will attempt
+to determine the right offset.
+
+.. ipython:: python
+   :okexcept:
+
+   rng_hourly = DatetimeIndex(['11/06/2011 00:00', '11/06/2011 01:00',
+                               '11/06/2011 01:00', '11/06/2011 02:00',
+                               '11/06/2011 03:00'])
+   rng_hourly.tz_localize('US/Eastern')
+   rng_hourly_eastern = rng_hourly.tz_localize('US/Eastern', infer_dst=True)
+   rng_hourly_eastern.values
+
 Time Deltas
 -----------
 
 Timedeltas are differences in times, expressed in difference units, e.g. days,hours,minutes,seconds.
-They can be both positive and negative.
+They can be both positive and negative. :ref:`DateOffsets<timeseries.offsets>` that are absolute in nature
+(``Day, Hour, Minute, Second, Milli, Micro, Nano``) can be used as ``timedeltas``.
 
 .. ipython:: python
 
-    from datetime import datetime, timedelta
-    s  = Series(date_range('2012-1-1', periods=3, freq='D'))
-    td = Series([ timedelta(days=i) for i in range(3) ])
-    df = DataFrame(dict(A = s, B = td))
-    df
-    df['C'] = df['A'] + df['B']
-    df
-    df.dtypes
+   from datetime import datetime, timedelta
+   s = Series(date_range('2012-1-1', periods=3, freq='D'))
+   td = Series([ timedelta(days=i) for i in range(3) ])
+   df = DataFrame(dict(A = s, B = td))
+   df
+   df['C'] = df['A'] + df['B']
+   df
+   df.dtypes
 
-    s - s.max()
-    s - datetime(2011,1,1,3,5)
-    s + timedelta(minutes=5)
+   s - s.max()
+   s - datetime(2011,1,1,3,5)
+   s + timedelta(minutes=5)
+   s + Minute(5)
+   s + Minute(5) + Milli(5)
+
+Getting scalar results from a ``timedelta64[ns]`` series
+
+.. ipython:: python
+
+   y = s - s[0]
+   y
 
 Series of timedeltas with ``NaT`` values are supported
 
 .. ipython:: python
 
-    y = s - s.shift()
-    y
-The can be set to ``NaT`` using ``np.nan`` analagously to datetimes
+   y = s - s.shift()
+   y
+
+Elements can be set to ``NaT`` using ``np.nan`` analagously to datetimes
 
 .. ipython:: python
 
-    y[1] = np.nan
-    y
+   y[1] = np.nan
+   y
 
 Operands can also appear in a reversed order (a singluar object operated with a Series)
 
 .. ipython:: python
 
-    s.max() - s
-    datetime(2011,1,1,3,5) - s
-    timedelta(minutes=5) + s
+   s.max() - s
+   datetime(2011,1,1,3,5) - s
+   timedelta(minutes=5) + s
 
 Some timedelta numeric like operations are supported.
 
 .. ipython:: python
 
-    td - timedelta(minutes=5,seconds=5,microseconds=5)
+   td - timedelta(minutes=5, seconds=5, microseconds=5)
 
-``min, max`` and the corresponding ``idxmin, idxmax`` operations are support on frames
-
-.. ipython:: python
-
-    df = DataFrame(dict(A = s - Timestamp('20120101')-timedelta(minutes=5,seconds=5),
-                        B = s - Series(date_range('2012-1-2', periods=3, freq='D'))))
-    df
-
-
-    df.min()
-    df.min(axis=1)
-
-    df.idxmin()
-    df.idxmax()
-
-``min, max`` operations are support on series, these return a single element ``timedelta64[ns]`` Series (this avoids
-having to deal with numpy timedelta64 issues). ``idxmin, idxmax`` are supported as well.
+``min, max`` and the corresponding ``idxmin, idxmax`` operations are supported on frames
 
 .. ipython:: python
 
-    df.min().max()
-    df.min(axis=1).min()
+   A = s - Timestamp('20120101') - timedelta(minutes=5, seconds=5)
+   B = s - Series(date_range('2012-1-2', periods=3, freq='D'))
 
-    df.min().idxmax()
-    df.min(axis=1).idxmin()
+   df = DataFrame(dict(A=A, B=B))
+   df
+
+   df.min()
+   df.min(axis=1)
+
+   df.idxmin()
+   df.idxmax()
+
+``min, max`` operations are supported on series; these return a single element
+``timedelta64[ns]`` Series (this avoids having to deal with numpy timedelta64
+issues). ``idxmin, idxmax`` are supported as well.
+
+.. ipython:: python
+
+   df.min().max()
+   df.min(axis=1).min()
+
+   df.min().idxmax()
+   df.min(axis=1).idxmin()
+
+You can fillna on timedeltas. Integers will be interpreted as seconds. You can
+pass a timedelta to get a particular value.
+
+.. ipython:: python
+
+   y.fillna(0)
+   y.fillna(10)
+   y.fillna(timedelta(days=-1,seconds=5))
+
+.. _timeseries.timedeltas_reductions:
+
+Time Deltas & Reductions
+------------------------
+
+.. warning::
+
+   A numeric reduction operation for ``timedelta64[ns]`` will return a single-element ``Series`` of
+   dtype ``timedelta64[ns]``.
+
+You can do numeric reduction operations on timedeltas.
+
+.. ipython:: python
+
+   y2 = y.fillna(timedelta(days=-1,seconds=5))
+   y2
+   y2.mean()
+   y2.quantile(.1)
+
+.. _timeseries.timedeltas_convert:
+
+Time Deltas & Conversions
+-------------------------
+
+.. versionadded:: 0.13
+
+**string/integer conversion**
+
+Using the top-level ``to_timedelta``, you can convert a scalar or array from the standard
+timedelta format (produced by ``to_csv``) into a timedelta type (``np.timedelta64`` in ``nanoseconds``).
+It can also construct Series.
+
+.. warning::
+
+   This requires ``numpy >= 1.7``
+
+.. ipython:: python
+
+   to_timedelta('1 days 06:05:01.00003')
+   to_timedelta('15.5us')
+   to_timedelta(['1 days 06:05:01.00003','15.5us','nan'])
+   to_timedelta(np.arange(5),unit='s')
+   to_timedelta(np.arange(5),unit='d')
+
+**frequency conversion**
+
+Timedeltas can be converted to other 'frequencies' by dividing by another timedelta,
+or by astyping to a specific timedelta type. These operations yield ``float64`` dtyped Series.
+
+.. ipython:: python
+
+   td = Series(date_range('20130101',periods=4))-Series(date_range('20121201',periods=4))
+   td[2] += np.timedelta64(timedelta(minutes=5,seconds=3))
+   td[3] = np.nan
+   td
+
+   # to days
+   td / np.timedelta64(1,'D')
+   td.astype('timedelta64[D]')
+
+   # to seconds
+   td / np.timedelta64(1,'s')
+   td.astype('timedelta64[s]')
+
+Dividing or multiplying a ``timedelta64[ns]`` Series by an integer or integer Series
+yields another ``timedelta64[ns]`` dtypes Series.
+
+.. ipython:: python
+
+   td * -1
+   td * Series([1,2,3,4])
+
+Numpy < 1.7 Compatibility
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Numpy < 1.7 has a broken ``timedelta64`` type that does not correctly work
+for arithmetic. Pandas bypasses this, but for frequency conversion as above,
+you need to create the divisor yourself. The ``np.timetimedelta64`` type only
+has 1 argument, the number of **micro** seconds.
+
+The following are equivalent statements in the two versions of numpy.
+
+.. code-block:: python
+
+   from distutils.version import LooseVersion
+   if LooseVersion(np.__version__) <= '1.6.2':
+       y / np.timedelta(86400*int(1e6))
+       y / np.timedelta(int(1e6))
+   else:
+       y / np.timedelta64(1,'D')
+       y / np.timedelta64(1,'s')
+

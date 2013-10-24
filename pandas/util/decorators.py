@@ -1,11 +1,11 @@
-from pandas.util.py3compat import StringIO
+from pandas.compat import StringIO, callable
 from pandas.lib import cache_readonly
 import sys
 import warnings
 
 
-def deprecate(name, alternative):
-    alt_name = alternative.func_name
+def deprecate(name, alternative, alt_name=None):
+    alt_name = alt_name or alternative.__name__
 
     def wrapper(*args, **kwargs):
         warnings.warn("%s is deprecated. Use %s instead" % (name, alt_name),
@@ -46,8 +46,9 @@ class Substitution(object):
         "%s %s wrote the Raven"
     """
     def __init__(self, *args, **kwargs):
-        assert not (
-            args and kwargs), "Only positional or keyword args are allowed"
+        if (args and kwargs):
+            raise AssertionError( "Only positional or keyword args are allowed")
+
         self.params = args or kwargs
 
     def __call__(self, func):
@@ -106,7 +107,7 @@ class Appender(object):
 
 
 def indent(text, indents=1):
-    if not text or type(text) != str:
+    if not text or not isinstance(text, str):
         return ''
     jointext = ''.join(['\n'] + ['    '] * indents)
     return jointext.join(text.split('\n'))

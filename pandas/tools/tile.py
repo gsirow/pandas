@@ -8,6 +8,7 @@ from pandas.core.index import _ensure_index
 import pandas.core.algorithms as algos
 import pandas.core.common as com
 import pandas.core.nanops as nanops
+from pandas.compat import zip
 
 import numpy as np
 
@@ -151,7 +152,7 @@ def _bins_to_cuts(x, bins, right=True, labels=None, retbins=False,
     ids = bins.searchsorted(x, side=side)
 
     if len(algos.unique(bins)) < len(bins):
-        raise Exception('Bin edges must be unique: %s' % repr(bins))
+        raise ValueError('Bin edges must be unique: %s' % repr(bins))
 
     if include_lowest:
         ids[x == bins[0]] = 1
@@ -244,7 +245,7 @@ def _format_label(x, precision=3):
                 else:  # pragma: no cover
                     return sgn + '.'.join(('%d' % whole, val))
         else:
-            return sgn + '%d' % whole
+            return sgn + '%0.f' % whole
     else:
         return str(x)
 

@@ -2,14 +2,16 @@
 
 from pandas import Series, DataFrame
 from pandas.core.index import MultiIndex
-from pandas.core.reshape import _unstack_multiple
 from pandas.tools.merge import concat
+from pandas.tools.util import cartesian_product
+from pandas.compat import range, lrange, zip
+from pandas import compat
 import pandas.core.common as com
 import numpy as np
 
 
 def pivot_table(data, values=None, rows=None, cols=None, aggfunc='mean',
-                fill_value=None, margins=False):
+                fill_value=None, margins=False, dropna=True):
     """
     Create a spreadsheet-style pivot table as a DataFrame. The levels in the
     pivot table will be stored in MultiIndex objects (hierarchical indexes) on
@@ -31,6 +33,8 @@ def pivot_table(data, values=None, rows=None, cols=None, aggfunc='mean',
         Value to replace missing values with
     margins : boolean, default False
         Add all row / columns (e.g. for subtotal / grand totals)
+    dropna : boolean, default True
+        Do not include columns whose entries are all NaN
 
     Examples
     --------
@@ -99,10 +103,24 @@ def pivot_table(data, values=None, rows=None, cols=None, aggfunc='mean',
     grouped = data.groupby(keys)
     agged = grouped.agg(aggfunc)
 
-    to_unstack = [agged.index.names[i]
-                  for i in range(len(rows), len(keys))]
+    table = agged
+    if table.index.nlevels > 1:
+        to_unstack = [agged.index.names[i]
+                      for i in range(len(rows), len(keys))]
+        table = agged.unstack(to_unstack)
 
-    table = agged.unstack(to_unstack)
+    if not dropna:
+        try:
+            m = MultiIndex.from_arrays(cartesian_product(table.index.levels))
+            table = table.reindex_axis(m, axis=0)
+        except AttributeError:
+            pass # it's a single level
+
+        try:
+            m = MultiIndex.from_arrays(cartesian_product(table.columns.levels))
+            table = table.reindex_axis(m, axis=1)
+        except AttributeError:
+            pass # it's a single level or a series
 
     if isinstance(table, DataFrame):
         if isinstance(table.columns, MultiIndex):
@@ -111,7 +129,7 @@ def pivot_table(data, values=None, rows=None, cols=None, aggfunc='mean',
             table = table.sort_index(axis=1)
 
     if fill_value is not None:
-        table = table.fillna(value=fill_value)
+        table = table.fillna(value=fill_value, downcast='infer')
 
     if margins:
         table = _add_margins(table, data, values, rows=rows,
@@ -121,23 +139,73 @@ def pivot_table(data, values=None, rows=None, cols=None, aggfunc='mean',
     if values_passed and not values_multi:
         table = table[values[0]]
 
+    if len(rows) == 0 and len(cols) > 0:
+        table = table.T
+
     return table
 
 
 DataFrame.pivot_table = pivot_table
 
 
-def _add_margins(table, data, values, rows=None, cols=None, aggfunc=np.mean):
-    grand_margin = {}
-    for k, v in data[values].iteritems():
-        try:
-            if isinstance(aggfunc, basestring):
-                grand_margin[k] = getattr(v, aggfunc)()
-            else:
-                grand_margin[k] = aggfunc(v)
-        except TypeError:
-            pass
+def _add_margins(table, data, values, rows, cols, aggfunc):
 
+    grand_margin = _compute_grand_margin(data, values, aggfunc)
+
+    if not values and isinstance(table, Series):
+        # If there are no values and the table is a series, then there is only
+        # one column in the data. Compute grand margin and return it.
+        row_key = ('All',) + ('',) * (len(rows) - 1) if len(rows) > 1 else 'All'
+        return table.append(Series({row_key: grand_margin['All']}))
+
+    if values:
+        marginal_result_set = _generate_marginal_results(table, data, values, rows, cols, aggfunc, grand_margin)
+        if not isinstance(marginal_result_set, tuple):
+            return marginal_result_set
+        result, margin_keys, row_margin = marginal_result_set
+    else:
+        marginal_result_set = _generate_marginal_results_without_values(table, data, rows, cols, aggfunc)
+        if not isinstance(marginal_result_set, tuple):
+            return marginal_result_set
+        result, margin_keys, row_margin = marginal_result_set
+
+    key = ('All',) + ('',) * (len(rows) - 1) if len(rows) > 1 else 'All'
+
+    row_margin = row_margin.reindex(result.columns)
+    # populate grand margin
+    for k in margin_keys:
+        if isinstance(k, compat.string_types):
+            row_margin[k] = grand_margin[k]
+        else:
+            row_margin[k] = grand_margin[k[0]]
+
+    margin_dummy = DataFrame(row_margin, columns=[key]).T
+
+    row_names = result.index.names
+    result = result.append(margin_dummy)
+    result.index.names = row_names
+
+    return result
+
+
+def _compute_grand_margin(data, values, aggfunc):
+
+    if values:
+        grand_margin = {}
+        for k, v in data[values].iteritems():
+            try:
+                if isinstance(aggfunc, compat.string_types):
+                    grand_margin[k] = getattr(v, aggfunc)()
+                else:
+                    grand_margin[k] = aggfunc(v)
+            except TypeError:
+                pass
+        return grand_margin
+    else:
+        return {'All': aggfunc(data.index)}
+
+
+def _generate_marginal_results(table, data, values, rows, cols, aggfunc, grand_margin):
     if len(cols) > 0:
         # need to "interleave" the margins
         table_pieces = []
@@ -176,34 +244,54 @@ def _add_margins(table, data, values, rows=None, cols=None, aggfunc=np.mean):
         row_margin = row_margin.stack()
 
         # slight hack
-        new_order = [len(cols)] + range(len(cols))
+        new_order = [len(cols)] + lrange(len(cols))
         row_margin.index = row_margin.index.reorder_levels(new_order)
     else:
         row_margin = Series(np.nan, index=result.columns)
 
-    key = ('All',) + ('',) * (len(rows) - 1) if len(rows) > 1 else 'All'
+    return result, margin_keys, row_margin
 
-    row_margin = row_margin.reindex(result.columns)
-    # populate grand margin
-    for k in margin_keys:
-        if len(cols) > 0:
-            row_margin[k] = grand_margin[k[0]]
+
+def _generate_marginal_results_without_values(table, data, rows, cols, aggfunc):
+    if len(cols) > 0:
+        # need to "interleave" the margins
+        margin_keys = []
+
+        def _all_key():
+            if len(cols) == 1:
+                return 'All'
+            return ('All', ) + ('', ) * (len(cols) - 1)
+
+        if len(rows) > 0:
+            margin = data[rows].groupby(rows).apply(aggfunc)
+            all_key = _all_key()
+            table[all_key] = margin
+            result = table
+            margin_keys.append(all_key)
+
         else:
-            row_margin[k] = grand_margin[k]
+            margin = data.groupby(level=0, axis=0).apply(aggfunc)
+            all_key = _all_key()
+            table[all_key] = margin
+            result = table
+            margin_keys.append(all_key)
+            return result
+    else:
+        result = table
+        margin_keys = table.columns
 
-    margin_dummy = DataFrame(row_margin, columns=[key]).T
+    if len(cols):
+        row_margin = data[cols].groupby(cols).apply(aggfunc)
+    else:
+        row_margin = Series(np.nan, index=result.columns)
 
-    row_names = result.index.names
-    result = result.append(margin_dummy)
-    result.index.names = row_names
-
-    return result
+    return result, margin_keys, row_margin
 
 
 def _convert_by(by):
     if by is None:
         by = []
-    elif (np.isscalar(by) or isinstance(by, np.ndarray)
+    elif (np.isscalar(by) or isinstance(by, (np.ndarray, Series))
           or hasattr(by, '__call__')):
         by = [by]
     else:
@@ -212,7 +300,7 @@ def _convert_by(by):
 
 
 def crosstab(rows, cols, values=None, rownames=None, colnames=None,
-             aggfunc=None, margins=False):
+             aggfunc=None, margins=False, dropna=True):
     """
     Compute a simple cross-tabulation of two (or more) factors. By default
     computes a frequency table of the factors unless an array of values and an
@@ -234,6 +322,8 @@ def crosstab(rows, cols, values=None, rownames=None, colnames=None,
         If passed, must match number of column arrays passed
     margins : boolean, default False
         Add row/column margins (subtotals)
+    dropna : boolean, default True
+        Do not include columns whose entries are all NaN
 
     Notes
     -----
@@ -277,13 +367,13 @@ def crosstab(rows, cols, values=None, rownames=None, colnames=None,
         df = DataFrame(data)
         df['__dummy__'] = 0
         table = df.pivot_table('__dummy__', rows=rownames, cols=colnames,
-                               aggfunc=len, margins=margins)
+                               aggfunc=len, margins=margins, dropna=dropna)
         return table.fillna(0).astype(np.int64)
     else:
         data['__dummy__'] = values
         df = DataFrame(data)
         table = df.pivot_table('__dummy__', rows=rownames, cols=colnames,
-                               aggfunc=aggfunc, margins=margins)
+                               aggfunc=aggfunc, margins=margins, dropna=dropna)
         return table
 
 
@@ -296,7 +386,8 @@ def _get_names(arrs, names, prefix='row'):
             else:
                 names.append('%s_%d' % (prefix, i))
     else:
-        assert(len(names) == len(arrs))
+        if len(names) != len(arrs):
+            raise AssertionError('arrays and names must have the same length')
         if not isinstance(names, list):
             names = list(names)
 

@@ -1,10 +1,10 @@
 # being a bit too dynamic
 # pylint: disable=E1101
-from itertools import izip
 import datetime
 import warnings
 import re
 from contextlib import contextmanager
+from distutils.version import LooseVersion
 
 import numpy as np
 
@@ -16,6 +16,8 @@ from pandas.tseries.index import DatetimeIndex
 from pandas.tseries.period import PeriodIndex, Period
 from pandas.tseries.frequencies import get_period_alias, get_base_alias
 from pandas.tseries.offsets import DateOffset
+from pandas.compat import range, lrange, lmap, map, zip
+import pandas.compat as compat
 
 try:  # mpl optional
     import pandas.tseries.converter as conv
@@ -92,6 +94,46 @@ mpl_stylesheet = {
 def _get_standard_kind(kind):
     return {'density': 'kde'}.get(kind, kind)
 
+def _get_standard_colors(num_colors=None, colormap=None, color_type='default',
+                         color=None):
+    import matplotlib.pyplot as plt
+
+    if color is None and colormap is not None:
+        if isinstance(colormap, compat.string_types):
+            import matplotlib.cm as cm
+            cmap = colormap
+            colormap = cm.get_cmap(colormap)
+            if colormap is None:
+                raise ValueError("Colormap {0} is not recognized".format(cmap))
+        colors = lmap(colormap, np.linspace(0, 1, num=num_colors))
+    elif color is not None:
+        if colormap is not None:
+            warnings.warn("'color' and 'colormap' cannot be used "
+                          "simultaneously. Using 'color'")
+        colors = color
+    else:
+        if color_type == 'default':
+            colors = plt.rcParams.get('axes.color_cycle', list('bgrcmyk'))
+            if isinstance(colors, compat.string_types):
+                colors = list(colors)
+        elif color_type == 'random':
+            import random
+            def random_color(column):
+                random.seed(column)
+                return [random.random() for _ in range(3)]
+
+            colors = lmap(random_color, lrange(num_colors))
+        else:
+            raise NotImplementedError
+
+    if len(colors) != num_colors:
+        multiple = num_colors//len(colors) - 1
+        mod = num_colors % len(colors)
+
+        colors += multiple * colors
+        colors += colors[:mod]
+
+    return colors
 
 class _Options(dict):
     """
@@ -159,12 +201,14 @@ plot_params = _Options()
 
 
 def scatter_matrix(frame, alpha=0.5, figsize=None, ax=None, grid=False,
-                   diagonal='hist', marker='.', **kwds):
+                   diagonal='hist', marker='.', density_kwds=None,
+                   hist_kwds=None, **kwds):
     """
     Draw a matrix of scatter plots.
 
     Parameters
     ----------
+    frame : DataFrame
     alpha : amount of transparency applied
     figsize : a tuple (width, height) in inches
     ax : Matplotlib axis object
@@ -172,6 +216,11 @@ def scatter_matrix(frame, alpha=0.5, figsize=None, ax=None, grid=False,
     diagonal : pick between 'kde' and 'hist' for
         either Kernel Density Estimation or Histogram
         plot in the diagonal
+    marker : Matplotlib marker type, default '.'
+    hist_kwds : other plotting keyword arguments
+        To be passed to hist function
+    density_kwds : other plotting keyword arguments
+        To be passed to kernel density estimate plot
     kwds : other plotting keyword arguments
         To be passed to scatter function
 
@@ -180,6 +229,7 @@ def scatter_matrix(frame, alpha=0.5, figsize=None, ax=None, grid=False,
     >>> df = DataFrame(np.random.randn(1000, 4), columns=['A','B','C','D'])
     >>> scatter_matrix(df, alpha=0.2)
     """
+    import matplotlib.pyplot as plt
     from matplotlib.artist import setp
 
     df = frame._get_numeric_data()
@@ -194,8 +244,14 @@ def scatter_matrix(frame, alpha=0.5, figsize=None, ax=None, grid=False,
 
     marker = _get_marker_compat(marker)
 
-    for i, a in zip(range(n), df.columns):
-        for j, b in zip(range(n), df.columns):
+    hist_kwds = hist_kwds or {}
+    density_kwds = density_kwds or {}
+
+    # workaround because `c='b'` is hardcoded in matplotlibs scatter method
+    kwds.setdefault('c', plt.rcParams['patch.facecolor'])
+
+    for i, a in zip(lrange(n), df.columns):
+        for j, b in zip(lrange(n), df.columns):
             ax = axes[i, j]
 
             if i == j:
@@ -203,13 +259,13 @@ def scatter_matrix(frame, alpha=0.5, figsize=None, ax=None, grid=False,
 
                 # Deal with the diagonal by drawing a histogram there.
                 if diagonal == 'hist':
-                    ax.hist(values)
+                    ax.hist(values, **hist_kwds)
                 elif diagonal in ('kde', 'density'):
                     from scipy.stats import gaussian_kde
                     y = values
                     gkde = gaussian_kde(y)
                     ind = np.linspace(y.min(), y.max(), 1000)
-                    ax.plot(ind, gkde.evaluate(ind), **kwds)
+                    ax.plot(ind, gkde.evaluate(ind), **density_kwds)
             else:
                 common = (mask[a] & mask[b]).values
 
@@ -266,7 +322,6 @@ def _gcf():
     import matplotlib.pyplot as plt
     return plt.gcf()
 
-
 def _get_marker_compat(marker):
     import matplotlib.lines as mlines
     import matplotlib as mpl
@@ -277,7 +332,7 @@ def _get_marker_compat(marker):
     return marker
 
 
-def radviz(frame, class_column, ax=None, **kwds):
+def radviz(frame, class_column, ax=None, colormap=None, **kwds):
     """RadViz - a multivariate data visualization algorithm
 
     Parameters:
@@ -285,6 +340,9 @@ def radviz(frame, class_column, ax=None, **kwds):
     frame: DataFrame object
     class_column: Column name that contains information about class membership
     ax: Matplotlib axis object, optional
+    colormap : str or matplotlib colormap object, default None
+        Colormap to select colors from. If string, load colormap with that name
+        from matplotlib.
     kwds: Matplotlib scatter method keyword arguments, optional
 
     Returns:
@@ -293,12 +351,6 @@ def radviz(frame, class_column, ax=None, **kwds):
     """
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
-    import matplotlib.text as text
-    import random
-
-    def random_color(column):
-        random.seed(column)
-        return [random.random() for _ in range(3)]
 
     def normalize(series):
         a = min(series)
@@ -316,6 +368,9 @@ def radviz(frame, class_column, ax=None, **kwds):
     classes = set(frame[class_column])
     to_plot = {}
 
+    colors = _get_standard_colors(num_colors=len(classes), colormap=colormap,
+                                  color_type='random', color=kwds.get('color'))
+
     for class_ in classes:
         to_plot[class_] = [[], []]
 
@@ -332,11 +387,9 @@ def radviz(frame, class_column, ax=None, **kwds):
         to_plot[class_name][0].append(y[0])
         to_plot[class_name][1].append(y[1])
 
-    for class_ in classes:
-        line = ax.scatter(to_plot[class_][0],
-                          to_plot[class_][1],
-                          color=random_color(class_),
-                          label=com.pprint_thing(class_), **kwds)
+    for i, class_ in enumerate(classes):
+        ax.scatter(to_plot[class_][0], to_plot[class_][1], color=colors[i],
+                   label=com.pprint_thing(class_), **kwds)
     ax.legend()
 
     ax.add_patch(patches.Circle((0.0, 0.0), radius=1.0, facecolor='none'))
@@ -362,17 +415,28 @@ def radviz(frame, class_column, ax=None, **kwds):
     return ax
 
 
-def andrews_curves(data, class_column, ax=None, samples=200):
+def andrews_curves(data, class_column, ax=None, samples=200, colormap=None,
+                   **kwds):
     """
     Parameters:
-    data: A DataFrame containing data to be plotted, preferably
-    normalized to (0.0, 1.0).
-    class_column: Name of the column containing class names.
-    samples: Number of points to plot in each curve.
+    -----------
+    data : DataFrame
+        Data to be plotted, preferably normalized to (0.0, 1.0)
+    class_column : Name of the column containing class names
+    ax : matplotlib axes object, default None
+    samples : Number of points to plot in each curve
+    colormap : str or matplotlib colormap object, default None
+        Colormap to select colors from. If string, load colormap with that name
+        from matplotlib.
+    kwds : Optional plotting arguments to be passed to matplotlib
+
+    Returns:
+    --------
+    ax: Matplotlib axis object
+
     """
     from math import sqrt, pi, sin, cos
     import matplotlib.pyplot as plt
-    import random
 
     def function(amplitudes):
         def f(x):
@@ -388,15 +452,15 @@ def andrews_curves(data, class_column, ax=None, samples=200):
             return result
         return f
 
-    def random_color(column):
-        random.seed(column)
-        return [random.random() for _ in range(3)]
     n = len(data)
-    classes = set(data[class_column])
     class_col = data[class_column]
     columns = [data[col] for col in data.columns if (col != class_column)]
     x = [-pi + 2.0 * pi * (t / float(samples)) for t in range(samples)]
     used_legends = set([])
+
+    colors = _get_standard_colors(num_colors=n, colormap=colormap,
+                                  color_type='random', color=kwds.get('color'))
+
     if ax is None:
         ax = plt.gca(xlim=(-pi, pi))
     for i in range(n):
@@ -407,7 +471,10 @@ def andrews_curves(data, class_column, ax=None, samples=200):
         if com.pprint_thing(class_col[i]) not in used_legends:
             label = com.pprint_thing(class_col[i])
             used_legends.add(label)
-        ax.plot(x, y, color=random_color(class_col[i]), label=label)
+            ax.plot(x, y, color=colors[i], label=label, **kwds)
+        else:
+            ax.plot(x, y, color=colors[i], **kwds)
+
     ax.legend(loc='upper right')
     ax.grid()
     return ax
@@ -430,7 +497,6 @@ def bootstrap_plot(series, fig=None, size=50, samples=500, **kwds):
     fig: matplotlib figure
     """
     import random
-    import matplotlib
     import matplotlib.pyplot as plt
 
     # random.sample(ndarray, int) fails on python 3.3, sigh
@@ -443,7 +509,7 @@ def bootstrap_plot(series, fig=None, size=50, samples=500, **kwds):
                           for sampling in samplings])
     if fig is None:
         fig = plt.figure()
-    x = range(samples)
+    x = lrange(samples)
     axes = []
     ax1 = fig.add_subplot(2, 3, 1)
     ax1.set_xlabel("Sample")
@@ -476,7 +542,7 @@ def bootstrap_plot(series, fig=None, size=50, samples=500, **kwds):
 
 
 def parallel_coordinates(data, class_column, cols=None, ax=None, colors=None,
-                         use_columns=False, xticks=None, **kwds):
+                         use_columns=False, xticks=None, colormap=None, **kwds):
     """Parallel coordinates plotting.
 
     Parameters
@@ -495,6 +561,8 @@ def parallel_coordinates(data, class_column, cols=None, ax=None, colors=None,
         If true, columns will be used as xticks
     xticks: list or tuple, optional
         A list of values to use for xticks
+    colormap: str or matplotlib colormap, default None
+        Colormap to use for line colors.
     kwds: list, optional
         A list of keywords for matplotlib plot method
 
@@ -512,11 +580,8 @@ def parallel_coordinates(data, class_column, cols=None, ax=None, colors=None,
     >>> plt.show()
     """
     import matplotlib.pyplot as plt
-    import random
 
-    def random_color(column):
-        random.seed(column)
-        return [random.random() for _ in range(3)]
+
     n = len(data)
     classes = set(data[class_column])
     class_col = data[class_column]
@@ -542,18 +607,16 @@ def parallel_coordinates(data, class_column, cols=None, ax=None, colors=None,
             raise ValueError('Length of xticks must match number of columns')
         x = xticks
     else:
-        x = range(ncols)
+        x = lrange(ncols)
 
     if ax is None:
         ax = plt.gca()
 
-    # if user has not specified colors to use, choose at random
-    if colors is None:
-        colors = dict((kls, random_color(kls)) for kls in classes)
-    else:
-        if len(colors) != len(classes):
-            raise ValueError('Number of colors must match number of classes')
-        colors = dict((kls, colors[i]) for i, kls in enumerate(classes))
+    color_values = _get_standard_colors(num_colors=len(classes),
+                                        colormap=colormap, color_type='random',
+                                        color=colors)
+
+    colors = dict(zip(classes, color_values))
 
     for i in range(n):
         row = df.irow(i).values
@@ -593,6 +656,10 @@ def lag_plot(series, lag=1, ax=None, **kwds):
     ax: Matplotlib axis object
     """
     import matplotlib.pyplot as plt
+    
+    # workaround because `c='b'` is hardcoded in matplotlibs scatter method
+    kwds.setdefault('c', plt.rcParams['patch.facecolor'])
+    
     data = series.values
     y1 = data[:-lag]
     y2 = data[lag:]
@@ -627,7 +694,7 @@ def autocorrelation_plot(series, ax=None):
     def r(h):
         return ((data[:n - h] - mean) * (data[h:] - mean)).sum() / float(n) / c0
     x = np.arange(n) + 1
-    y = map(r, x)
+    y = lmap(r, x)
     z95 = 1.959963984540054
     z99 = 2.5758293035489004
     ax.axhline(y=z99 / np.sqrt(n), linestyle='--', color='grey')
@@ -642,9 +709,9 @@ def autocorrelation_plot(series, ax=None):
     return ax
 
 
-def grouped_hist(data, column=None, by=None, ax=None, bins=50, log=False,
-                 figsize=None, layout=None, sharex=False, sharey=False,
-                 rot=90, **kwargs):
+def grouped_hist(data, column=None, by=None, ax=None, bins=50, figsize=None,
+                 layout=None, sharex=False, sharey=False, rot=90, grid=True,
+                 **kwargs):
     """
     Grouped histogram
 
@@ -655,19 +722,20 @@ def grouped_hist(data, column=None, by=None, ax=None, bins=50, log=False,
     by: object, optional
     ax: axes, optional
     bins: int, default 50
-    log: boolean, default False
     figsize: tuple, optional
     layout: optional
     sharex: boolean, default False
     sharey: boolean, default False
     rot: int, default 90
+    grid: bool, default True
+    kwargs: dict, keyword arguments passed to matplotlib.Axes.hist
 
     Returns
     -------
     axes: collection of Matplotlib Axes
     """
     def plot_group(group, ax):
-        ax.hist(group.dropna().values, bins=bins)
+        ax.hist(group.dropna().values, bins=bins, **kwargs)
 
     fig, axes = _grouped_plot(plot_group, data, column=column,
                               by=by, sharex=sharex, sharey=sharey,
@@ -697,7 +765,7 @@ class MPLPlot(object):
                  ax=None, fig=None, title=None, xlim=None, ylim=None,
                  xticks=None, yticks=None,
                  sort_columns=False, fontsize=None,
-                 secondary_y=False, **kwds):
+                 secondary_y=False, colormap=None, **kwds):
 
         self.data = data
         self.by = by
@@ -739,6 +807,8 @@ class MPLPlot(object):
             secondary_y = [secondary_y]
         self.secondary_y = secondary_y
 
+        self.colormap = colormap
+
         self.kwds = kwds
 
         self._validate_color_args()
@@ -756,6 +826,19 @@ class MPLPlot(object):
              isinstance(self.data, DataFrame) and len(self.data.columns) == 1)):
             # support series.plot(color='green')
             self.kwds['color'] = [self.kwds['color']]
+
+        if ('color' in self.kwds or 'colors' in self.kwds) and \
+                self.colormap is not None:
+            warnings.warn("'color' and 'colormap' cannot be used "
+                          "simultaneously. Using 'color'")
+
+        if 'color' in self.kwds and self.style is not None:
+            # need only a single match
+            if re.match('^[a-z]+?', self.style) is not None:
+                raise ValueError("Cannot pass 'style' string with a color "
+                                 "symbol and 'color' keyword argument. Please"
+                                 " use one or the other or pass 'style' "
+                                 "without a color symbol")
 
     def _iter_data(self):
         from pandas.core.frame import DataFrame
@@ -810,6 +893,7 @@ class MPLPlot(object):
             new_ax._get_lines.color_cycle = orig_ax._get_lines.color_cycle
 
             orig_ax.right_ax, new_ax.left_ax = new_ax, orig_ax
+            new_ax.right_ax = new_ax
 
             if len(orig_ax.get_lines()) == 0:  # no data on left y
                 orig_ax.get_yaxis().set_visible(False)
@@ -859,7 +943,19 @@ class MPLPlot(object):
         return (len(self.data.columns), 1)
 
     def _compute_plot_data(self):
-        pass
+        numeric_data = self.data.convert_objects()._get_numeric_data()
+
+        try:
+            is_empty = numeric_data.empty
+        except AttributeError:
+            is_empty = not len(numeric_data)
+
+        # no empty frames or series allowed
+        if is_empty:
+            raise TypeError('Empty {0!r}: no numeric data to '
+                            'plot'.format(numeric_data.__class__.__name__))
+
+        self.data = numeric_data
 
     def _make_plot(self):
         raise NotImplementedError
@@ -931,8 +1027,8 @@ class MPLPlot(object):
 
         if self.use_index:
             if convert_period and isinstance(index, PeriodIndex):
-                index = index.to_timestamp().order()
-                x = index._mpl_repr()
+                self.data = self.data.reindex(index=index.order())
+                x = self.data.index.to_timestamp()._mpl_repr()
             elif index.is_numeric():
                 """
                 Matplotlib supports numeric values or datetime objects as
@@ -942,12 +1038,13 @@ class MPLPlot(object):
                 """
                 x = index._mpl_repr()
             elif is_datetype:
-                x = index.order()._mpl_repr()
+                self.data = self.data.sort_index()
+                x = self.data.index._mpl_repr()
             else:
                 self._need_to_set_index = True
-                x = range(len(index))
+                x = lrange(len(index))
         else:
-            x = range(len(index))
+            x = lrange(len(index))
 
         return x
 
@@ -1027,25 +1124,38 @@ class MPLPlot(object):
         return style or None
 
     def _get_colors(self):
-        import matplotlib.pyplot as plt
-        cycle = plt.rcParams.get('axes.color_cycle', list('bgrcmyk'))
-        if isinstance(cycle, basestring):
-            cycle = list(cycle)
-        colors = self.kwds.get('color', cycle)
-        return colors
+        from pandas.core.frame import DataFrame
+        if isinstance(self.data, DataFrame):
+            num_colors = len(self.data.columns)
+        else:
+            num_colors = 1
+
+        return _get_standard_colors(num_colors=num_colors,
+                                    colormap=self.colormap,
+                                    color=self.kwds.get('color'))
 
     def _maybe_add_color(self, colors, kwds, style, i):
-        has_color = 'color' in kwds
+        has_color = 'color' in kwds or self.colormap is not None
         if has_color and (style is None or re.match('[a-z]+', style) is None):
             kwds['color'] = colors[i % len(colors)]
 
+    def _get_marked_label(self, label, col_num):
+        if self.on_right(col_num):
+            return label + ' (right)'
+        else:
+            return label
+
 
 class KdePlot(MPLPlot):
-    def __init__(self, data, **kwargs):
+    def __init__(self, data, bw_method=None, ind=None, **kwargs):
         MPLPlot.__init__(self, data, **kwargs)
+        self.bw_method=bw_method
+        self.ind=ind
 
     def _make_plot(self):
         from scipy.stats import gaussian_kde
+        from scipy import __version__ as spv
+        from distutils.version import LooseVersion
         plotf = self._get_plot_function()
         colors = self._get_colors()
         for i, (label, y) in enumerate(self._iter_data()):
@@ -1054,10 +1164,23 @@ class KdePlot(MPLPlot):
 
             label = com.pprint_thing(label)
 
-            gkde = gaussian_kde(y)
+            if LooseVersion(spv) >= '0.11.0':
+                gkde = gaussian_kde(y, bw_method=self.bw_method)
+            else:
+                gkde = gaussian_kde(y)
+                if self.bw_method is not None:
+                    msg = ('bw_method was added in Scipy 0.11.0.' +
+                           ' Scipy version in use is %s.' % spv)
+                    warnings.warn(msg)
+
             sample_range = max(y) - min(y)
-            ind = np.linspace(min(y) - 0.5 * sample_range,
-                              max(y) + 0.5 * sample_range, 1000)
+
+            if self.ind is None:
+                ind = np.linspace(min(y) - 0.5 * sample_range,
+                                  max(y) + 0.5 * sample_range, 1000)
+            else:
+                ind = self.ind
+
             ax.set_ylabel("Density")
 
             y = gkde.evaluate(ind)
@@ -1073,11 +1196,36 @@ class KdePlot(MPLPlot):
             ax.grid(self.grid)
 
     def _post_plot_logic(self):
-        if self.subplots and self.legend:
+        if self.legend:
             for ax in self.axes:
                 ax.legend(loc='best')
 
-
+class ScatterPlot(MPLPlot):
+    def __init__(self, data, x, y, **kwargs):
+        MPLPlot.__init__(self, data, **kwargs)
+        self.kwds.setdefault('c', self.plt.rcParams['patch.facecolor'])
+        if x is None or y is None:
+            raise ValueError( 'scatter requires and x and y column')
+        if com.is_integer(x) and not self.data.columns.holds_integer():
+            x = self.data.columns[x]
+        if com.is_integer(y) and not self.data.columns.holds_integer():
+            y = self.data.columns[y]
+        self.x = x
+        self.y = y
+        
+        
+    def _make_plot(self):
+        x, y, data = self.x, self.y, self.data
+        ax = self.axes[0]
+        ax.scatter(data[x].values, data[y].values, **self.kwds)
+        
+    def _post_plot_logic(self):
+        ax = self.axes[0]
+        x, y = self.x, self.y   
+        ax.set_ylabel(com.pprint_thing(y))
+        ax.set_xlabel(com.pprint_thing(x))
+        
+                
 class LinePlot(MPLPlot):
 
     def __init__(self, data, **kwargs):
@@ -1135,7 +1283,6 @@ class LinePlot(MPLPlot):
         return (freq is not None) and self._is_dynamic_freq(freq)
 
     def _make_plot(self):
-        import pandas.tseries.plotting as tsplot
         # this is slightly deceptive
         if not self.x_compat and self.use_index and self._use_dynamic_x():
             data = self._maybe_convert_index(self.data)
@@ -1169,10 +1316,12 @@ class LinePlot(MPLPlot):
 
                 newline = plotf(*args, **kwds)[0]
                 lines.append(newline)
-                leg_label = label
-                if self.mark_right and self.on_right(i):
-                    leg_label += ' (right)'
-                labels.append(leg_label)
+
+                if self.mark_right:
+                    labels.append(self._get_marked_label(label, i))
+                else:
+                    labels.append(label)
+
                 ax.grid(self.grid)
 
                 if self._is_datetype():
@@ -1190,10 +1339,16 @@ class LinePlot(MPLPlot):
         lines = []
         labels = []
 
-        def to_leg_label(label, i):
-            if self.mark_right and self.on_right(i):
-                return label + ' (right)'
-            return label
+        def _plot(data, col_num, ax, label, style, **kwds):
+            newlines = tsplot(data, plotf, ax=ax, label=label,
+                                style=style, **kwds)
+            ax.grid(self.grid)
+            lines.append(newlines[0])
+
+            if self.mark_right:
+                labels.append(self._get_marked_label(label, col_num))
+            else:
+                labels.append(label)
 
         if isinstance(data, Series):
             ax = self._get_ax(0)  # self.axes[0]
@@ -1202,12 +1357,7 @@ class LinePlot(MPLPlot):
             kwds = kwargs.copy()
             self._maybe_add_color(colors, kwds, style, 0)
 
-            newlines = tsplot(data, plotf, ax=ax, label=label,
-                              style=self.style, **kwds)
-            ax.grid(self.grid)
-            lines.append(newlines[0])
-            leg_label = to_leg_label(label, 0)
-            labels.append(leg_label)
+            _plot(data, 0, ax, label, self.style, **kwds)
         else:
             for i, col in enumerate(data.columns):
                 label = com.pprint_thing(col)
@@ -1217,13 +1367,7 @@ class LinePlot(MPLPlot):
 
                 self._maybe_add_color(colors, kwds, style, i)
 
-                newlines = tsplot(data[col], plotf, ax=ax, label=label,
-                                  style=style, **kwds)
-
-                lines.append(newlines[0])
-                leg_label = to_leg_label(label, i)
-                labels.append(leg_label)
-                ax.grid(self.grid)
+                _plot(data[col], i, ax, label, style, **kwds)
 
         self._make_legend(lines, labels)
 
@@ -1314,6 +1458,7 @@ class BarPlot(MPLPlot):
     _default_rot = {'bar': 90, 'barh': 0}
 
     def __init__(self, data, **kwargs):
+        self.mark_right = kwargs.pop('mark_right', True)
         self.stacked = kwargs.pop('stacked', False)
         self.ax_pos = np.arange(len(data)) + 0.25
         if self.stacked:
@@ -1321,6 +1466,7 @@ class BarPlot(MPLPlot):
         else:
             self.tickoffset = 0.375
         self.bar_width = 0.5
+        self.log = kwargs.pop('log',False)
         MPLPlot.__init__(self, data, **kwargs)
 
     def _args_adjust(self):
@@ -1331,30 +1477,26 @@ class BarPlot(MPLPlot):
     def bar_f(self):
         if self.kind == 'bar':
             def f(ax, x, y, w, start=None, **kwds):
-                return ax.bar(x, y, w, bottom=start, **kwds)
+                return ax.bar(x, y, w, bottom=start,log=self.log, **kwds)
         elif self.kind == 'barh':
-            def f(ax, x, y, w, start=None, **kwds):
+            def f(ax, x, y, w, start=None, log=self.log, **kwds):
                 return ax.barh(x, y, w, left=start, **kwds)
         else:
             raise NotImplementedError
 
         return f
 
-    def _get_colors(self):
-        import matplotlib.pyplot as plt
-        cycle = plt.rcParams.get('axes.color_cycle', list('bgrcmyk'))
-        if isinstance(cycle, basestring):
-            cycle = list(cycle)
-        has_colors = 'color' in self.kwds
-        colors = self.kwds.get('color', cycle)
-        return colors
-
     def _make_plot(self):
+        import matplotlib as mpl
+
+        # mpl decided to make their version string unicode across all Python
+        # versions for mpl >= 1.3 so we have to call str here for python 2
+        mpl_le_1_2_1 = str(mpl.__version__) <= LooseVersion('1.2.1')
+
         colors = self._get_colors()
+        ncolors = len(colors)
         rects = []
         labels = []
-
-        ax = self._get_ax(0)  # self.axes[0]
 
         bar_f = self.bar_f
 
@@ -1363,14 +1505,21 @@ class BarPlot(MPLPlot):
         K = self.nseries
 
         for i, (label, y) in enumerate(self._iter_data()):
+            ax = self._get_ax(i)
             label = com.pprint_thing(label)
             kwds = self.kwds.copy()
-            kwds['color'] = colors[i % len(colors)]
+            kwds['color'] = colors[i % ncolors]
+
+            start = 0
+            if self.log:
+                start = 1
+                if any(y < 1):
+                    # GH3254
+                    start = 0 if mpl_le_1_2_1 else None
 
             if self.subplots:
-                ax = self._get_ax(i)  # self.axes[i]
-                rect = bar_f(ax, self.ax_pos, y,
-                             self.bar_width, **kwds)
+                rect = bar_f(ax, self.ax_pos, y,  self.bar_width,
+                             start=start, **kwds)
                 ax.set_title(label)
             elif self.stacked:
                 mask = y > 0
@@ -1381,9 +1530,12 @@ class BarPlot(MPLPlot):
                 neg_prior = neg_prior + np.where(mask, 0, y)
             else:
                 rect = bar_f(ax, self.ax_pos + i * 0.75 / K, y, 0.75 / K,
-                              label=label, **kwds)
+                             start=start, label=label, **kwds)
             rects.append(rect)
-            labels.append(label)
+            if self.mark_right:
+                labels.append(self._get_marked_label(label, i))
+            else:
+                labels.append(label)
 
         if self.legend and not self.subplots:
             patches = [r[0] for r in rects]
@@ -1400,7 +1552,8 @@ class BarPlot(MPLPlot):
                 ax.set_xticks(self.ax_pos + self.tickoffset)
                 ax.set_xticklabels(str_index, rotation=self.rot,
                                    fontsize=self.fontsize)
-                ax.axhline(0, color='k', linestyle='--')
+                if not self.log: # GH3254+
+                    ax.axhline(0, color='k', linestyle='--')
                 if name is not None:
                     ax.set_xlabel(name)
             else:
@@ -1433,11 +1586,12 @@ def plot_frame(frame=None, x=None, y=None, subplots=False, sharex=True,
                secondary_y=False, **kwds):
 
     """
-    Make line or bar plot of DataFrame's series with the index on the x-axis
+    Make line, bar, or scatter plots of DataFrame series with the index on the x-axis
     using matplotlib / pylab.
 
     Parameters
     ----------
+    frame : DataFrame
     x : label or position, default None
     y : label or position, default None
         Allows plotting of one column versus another
@@ -1463,10 +1617,11 @@ def plot_frame(frame=None, x=None, y=None, subplots=False, sharex=True,
     ax : matplotlib axis object, default None
     style : list or dict
         matplotlib line style per column
-    kind : {'line', 'bar', 'barh', 'kde', 'density'}
+    kind : {'line', 'bar', 'barh', 'kde', 'density', 'scatter'}
         bar : vertical bar plot
         barh : horizontal bar plot
         kde/density : Kernel Density Estimation plot
+        scatter: scatter plot
     logx : boolean, default False
         For line plots, use log scaling on x axis
     logy : boolean, default False
@@ -1481,7 +1636,13 @@ def plot_frame(frame=None, x=None, y=None, subplots=False, sharex=True,
         Rotation for ticks
     secondary_y : boolean or sequence, default False
         Whether to plot on the secondary y-axis
-        If dict then can select which columns to plot on secondary y-axis
+        If a list/tuple, which columns to plot on secondary y-axis
+    mark_right: boolean, default True
+        When using a secondary_y axis, should the legend label the axis of
+        the various columns automatically
+    colormap : str or matplotlib colormap object, default None
+        Colormap to select colors from. If string, load colormap with that name
+        from matplotlib.
     kwds : keywords
         Options to pass to matplotlib plotting method
 
@@ -1496,36 +1657,50 @@ def plot_frame(frame=None, x=None, y=None, subplots=False, sharex=True,
         klass = BarPlot
     elif kind == 'kde':
         klass = KdePlot
+    elif kind == 'scatter':
+        klass = ScatterPlot 
     else:
         raise ValueError('Invalid chart type given %s' % kind)
 
-    if x is not None:
-        if com.is_integer(x) and not frame.columns.holds_integer():
-            x = frame.columns[x]
-        frame = frame.set_index(x)
-
-    if y is not None:
-        if com.is_integer(y) and not frame.columns.holds_integer():
-            y = frame.columns[y]
-        label = x if x is not None else frame.index.name
-        label = kwds.pop('label', label)
-        ser = frame[y]
-        ser.index.name = label
-        return plot_series(ser, label=label, kind=kind,
-                           use_index=use_index,
-                           rot=rot, xticks=xticks, yticks=yticks,
-                           xlim=xlim, ylim=ylim, ax=ax, style=style,
-                           grid=grid, logx=logx, logy=logy,
-                           secondary_y=secondary_y, title=title,
-                           figsize=figsize, fontsize=fontsize, **kwds)
-
-    plot_obj = klass(frame, kind=kind, subplots=subplots, rot=rot,
-                     legend=legend, ax=ax, style=style, fontsize=fontsize,
-                     use_index=use_index, sharex=sharex, sharey=sharey,
-                     xticks=xticks, yticks=yticks, xlim=xlim, ylim=ylim,
-                     title=title, grid=grid, figsize=figsize, logx=logx,
-                     logy=logy, sort_columns=sort_columns,
-                     secondary_y=secondary_y, **kwds)
+    if kind == 'scatter':
+        plot_obj = klass(frame,  x=x, y=y, kind=kind, subplots=subplots, 
+                         rot=rot,legend=legend, ax=ax, style=style, 
+                         fontsize=fontsize, use_index=use_index, sharex=sharex,
+                         sharey=sharey, xticks=xticks, yticks=yticks, 
+                         xlim=xlim, ylim=ylim, title=title, grid=grid, 
+                         figsize=figsize, logx=logx, logy=logy, 
+                         sort_columns=sort_columns, secondary_y=secondary_y, 
+                         **kwds)
+    else:
+        if x is not None:
+            if com.is_integer(x) and not frame.columns.holds_integer():
+                x = frame.columns[x]
+            frame = frame.set_index(x)
+    
+        if y is not None:
+            if com.is_integer(y) and not frame.columns.holds_integer():
+                y = frame.columns[y]
+            label = x if x is not None else frame.index.name
+            label = kwds.pop('label', label)
+            ser = frame[y]
+            ser.index.name = label
+            return plot_series(ser, label=label, kind=kind,
+                               use_index=use_index,
+                               rot=rot, xticks=xticks, yticks=yticks,
+                               xlim=xlim, ylim=ylim, ax=ax, style=style,
+                               grid=grid, logx=logx, logy=logy,
+                               secondary_y=secondary_y, title=title,
+                               figsize=figsize, fontsize=fontsize, **kwds)
+                                 
+        else:
+            plot_obj = klass(frame, kind=kind, subplots=subplots, rot=rot,
+                             legend=legend, ax=ax, style=style, fontsize=fontsize,
+                             use_index=use_index, sharex=sharex, sharey=sharey,
+                             xticks=xticks, yticks=yticks, xlim=xlim, ylim=ylim,
+                             title=title, grid=grid, figsize=figsize, logx=logx,
+                             logy=logy, sort_columns=sort_columns,
+                             secondary_y=secondary_y, **kwds)
+                             
     plot_obj.generate()
     plot_obj.draw()
     if subplots:
@@ -1562,14 +1737,15 @@ def plot_series(series, label=None, kind='line', use_index=True, rot=None,
         If not passed, uses gca()
     style : string, default matplotlib default
         matplotlib line style to use
-    grid : matplot grid
-    legend: matplot legende
+    grid : matplotlib grid
+    legend: matplotlib legend
     logx : boolean, default False
         For line plots, use log scaling on x axis
     logy : boolean, default False
         For line plots, use log scaling on y axis
     secondary_y : boolean or sequence of ints, default False
         If True then y-axis will be on the right
+    figsize : a tuple (width, height) in inches
     kwds : keywords
         Options to pass to matplotlib plotting method
 
@@ -1584,13 +1760,26 @@ def plot_series(series, label=None, kind='line', use_index=True, rot=None,
         klass = BarPlot
     elif kind == 'kde':
         klass = KdePlot
+    else:
+        raise ValueError('Invalid chart type given %s' % kind)
 
-    if ax is None:
+    """
+    If no axis is specified, we check whether there are existing figures.
+    If so, we get the current axis and check whether yaxis ticks are on the
+    right. Ticks for the plot of the series will be on the right unless
+    there is at least one axis with ticks on the left.
+
+    If we do not check for whether there are existing figures, _gca() will
+    create a figure with the default figsize, causing the figsize= parameter to
+    be ignored.
+    """
+    import matplotlib.pyplot as plt
+    if ax is None and len(plt.get_fignums()) > 0:
         ax = _gca()
         if ax.get_yaxis().get_ticks_position().strip().lower() == 'right':
             fig = _gcf()
             axes = fig.get_axes()
-            for i in range(len(axes))[::-1]:
+            for i in reversed(range(len(axes))):
                 ax = axes[i]
                 ypos = ax.get_yaxis().get_ticks_position().strip().lower()
                 if ypos == 'left':
@@ -1609,7 +1798,8 @@ def plot_series(series, label=None, kind='line', use_index=True, rot=None,
     plot_obj.generate()
     plot_obj.draw()
 
-    return plot_obj.ax
+    # plot_obj.ax is None if we created the first figure
+    return plot_obj.axes[0]
 
 
 def boxplot(data, column=None, by=None, ax=None, fontsize=None,
@@ -1625,8 +1815,11 @@ def boxplot(data, column=None, by=None, ax=None, fontsize=None,
         Can be any valid input to groupby
     by : string or sequence
         Column in the DataFrame to group by
+    ax : Matplotlib axis object, optional
     fontsize : int or string
     rot : label rotation angle
+    figsize : A tuple (width, height) in inches
+    grid : Setting this to True will show the grid
     kwds : other plotting keyword arguments to be passed to matplotlib boxplot
            function
 
@@ -1639,16 +1832,29 @@ def boxplot(data, column=None, by=None, ax=None, fontsize=None,
         data = DataFrame({'x': data})
         column = 'x'
 
+
+    def _get_colors():
+        return _get_standard_colors(color=kwds.get('color'), num_colors=1)
+
+    def maybe_color_bp(bp):
+        if 'color' not in kwds :
+            from matplotlib.artist import setp
+            setp(bp['boxes'],color=colors[0],alpha=1)
+            setp(bp['whiskers'],color=colors[0],alpha=1)
+            setp(bp['medians'],color=colors[2],alpha=1)
+
     def plot_group(grouped, ax):
         keys, values = zip(*grouped)
         keys = [com.pprint_thing(x) for x in keys]
         values = [remove_na(v) for v in values]
-        ax.boxplot(values, **kwds)
+        bp = ax.boxplot(values, **kwds)
         if kwds.get('vert', 1):
             ax.set_xticklabels(keys, rotation=rot, fontsize=fontsize)
         else:
             ax.set_yticklabels(keys, rotation=rot, fontsize=fontsize)
+        maybe_color_bp(bp)
 
+    colors = _get_colors()
     if column is None:
         columns = None
     else:
@@ -1681,7 +1887,10 @@ def boxplot(data, column=None, by=None, ax=None, fontsize=None,
         # Return boxplot dict in single plot case
 
         clean_values = [remove_na(x) for x in data[cols].values.T]
+
         bp = ax.boxplot(clean_values, **kwds)
+        maybe_color_bp(bp)
+
         if kwds.get('vert', 1):
             ax.set_xticklabels(keys, rotation=rot, fontsize=fontsize)
         else:
@@ -1708,12 +1917,27 @@ def format_date_labels(ax, rot):
 
 def scatter_plot(data, x, y, by=None, ax=None, figsize=None, grid=False, **kwargs):
     """
+    Make a scatter plot from two DataFrame columns
+
+    Parameters
+    ----------
+    data : DataFrame
+    x : Column name for the x-axis values
+    y : Column name for the y-axis values
+    ax : Matplotlib axis object
+    figsize : A tuple (width, height) in inches
+    grid : Setting this to True will show the grid
+    kwargs : other plotting keyword arguments
+        To be passed to scatter function
 
     Returns
     -------
     fig : matplotlib.Figure
     """
     import matplotlib.pyplot as plt
+
+    # workaround because `c='b'` is hardcoded in matplotlibs scatter method
+    kwargs.setdefault('c', plt.rcParams['patch.facecolor'])
 
     def plot_group(group, ax):
         xvals = group[x].values
@@ -1738,15 +1962,19 @@ def scatter_plot(data, x, y, by=None, ax=None, figsize=None, grid=False, **kwarg
     return fig
 
 
-def hist_frame(
-    data, column=None, by=None, grid=True, xlabelsize=None, xrot=None,
-    ylabelsize=None, yrot=None, ax=None,
-        sharex=False, sharey=False, **kwds):
+def hist_frame(data, column=None, by=None, grid=True, xlabelsize=None,
+               xrot=None, ylabelsize=None, yrot=None, ax=None, sharex=False,
+               sharey=False, figsize=None, layout=None, **kwds):
     """
     Draw Histogram the DataFrame's series using matplotlib / pylab.
 
     Parameters
     ----------
+    data : DataFrame
+    column : string or sequence
+        If passed, will be used to limit data to a subset of columns
+    by : object, optional
+        If passed, then used to form histograms for separate groups
     grid : boolean, default True
         Whether to show axis grid lines
     xlabelsize : int, default None
@@ -1760,17 +1988,21 @@ def hist_frame(
     ax : matplotlib axes object, default None
     sharex : bool, if True, the X axis will be shared amongst all subplots.
     sharey : bool, if True, the Y axis will be shared amongst all subplots.
+    figsize : tuple
+        The size of the figure to create in inches by default
+    layout: (optional) a tuple (rows, columns) for the layout of the histograms
     kwds : other plotting keyword arguments
         To be passed to hist function
     """
     if column is not None:
         if not isinstance(column, (list, np.ndarray)):
             column = [column]
-        data = data.ix[:, column]
+        data = data[column]
 
     if by is not None:
-
-        axes = grouped_hist(data, by=by, ax=ax, grid=grid, **kwds)
+        axes = grouped_hist(data, by=by, ax=ax, grid=grid, figsize=figsize,
+                            sharex=sharex, sharey=sharey, layout=layout,
+                            **kwds)
 
         for ax in axes.ravel():
             if xlabelsize is not None:
@@ -1786,17 +2018,26 @@ def hist_frame(
 
     import matplotlib.pyplot as plt
     n = len(data.columns)
-    rows, cols = 1, 1
-    while rows * cols < n:
-        if cols > rows:
-            rows += 1
-        else:
-            cols += 1
-    _, axes = _subplots(nrows=rows, ncols=cols, ax=ax, squeeze=False,
-                        sharex=sharex, sharey=sharey)
+
+    if layout is not None:
+        if not isinstance(layout, (tuple, list)) or len(layout) != 2:
+            raise ValueError('Layout must be a tuple of (rows, columns)')
+
+        rows, cols = layout
+        if rows * cols < n:
+            raise ValueError('Layout of %sx%s is incompatible with %s columns' % (rows, cols, n))
+    else:
+        rows, cols = 1, 1
+        while rows * cols < n:
+            if cols > rows:
+                rows += 1
+            else:
+                cols += 1
+    fig, axes = _subplots(nrows=rows, ncols=cols, ax=ax, squeeze=False,
+                          sharex=sharex, sharey=sharey, figsize=figsize)
 
     for i, col in enumerate(com._try_sort(data.columns)):
-        ax = axes[i / cols][i % cols]
+        ax = axes[i / cols, i % cols]
         ax.xaxis.set_visible(True)
         ax.yaxis.set_visible(True)
         ax.hist(data[col].dropna().values, **kwds)
@@ -1816,13 +2057,13 @@ def hist_frame(
         ax = axes[j / cols, j % cols]
         ax.set_visible(False)
 
-    ax.get_figure().subplots_adjust(wspace=0.3, hspace=0.3)
+    fig.subplots_adjust(wspace=0.3, hspace=0.3)
 
     return axes
 
 
 def hist_series(self, by=None, ax=None, grid=True, xlabelsize=None,
-                xrot=None, ylabelsize=None, yrot=None, **kwds):
+                xrot=None, ylabelsize=None, yrot=None, figsize=None, **kwds):
     """
     Draw histogram of the input series using matplotlib
 
@@ -1842,6 +2083,8 @@ def hist_series(self, by=None, ax=None, grid=True, xlabelsize=None,
         If specified changes the y-axis label size
     yrot : float, default None
         rotation of y axis labels
+    figsize : tuple, default None
+        figure size in inches by default
     kwds : keywords
         To be passed to the actual plotting function
 
@@ -1853,15 +2096,31 @@ def hist_series(self, by=None, ax=None, grid=True, xlabelsize=None,
     import matplotlib.pyplot as plt
 
     if by is None:
+        if kwds.get('layout', None) is not None:
+            raise ValueError("The 'layout' keyword is not supported when "
+                             "'by' is None")
+        # hack until the plotting interface is a bit more unified
+        fig = kwds.pop('figure', plt.gcf() if plt.get_fignums() else
+                       plt.figure(figsize=figsize))
+        if (figsize is not None and tuple(figsize) !=
+            tuple(fig.get_size_inches())):
+            fig.set_size_inches(*figsize, forward=True)
         if ax is None:
-            ax = plt.gca()
+            ax = fig.gca()
+        elif ax.get_figure() != fig:
+            raise AssertionError('passed axis not bound to passed figure')
         values = self.dropna().values
 
         ax.hist(values, **kwds)
         ax.grid(grid)
         axes = np.array([ax])
     else:
-        axes = grouped_hist(self, by=by, ax=ax, grid=grid, **kwds)
+        if 'figure' in kwds:
+            raise ValueError("Cannot pass 'figure' when using the "
+                             "'by' argument, since a new 'Figure' instance "
+                             "will be created")
+        axes = grouped_hist(self, by=by, ax=ax, grid=grid, figsize=figsize,
+                            **kwds)
 
     for ax in axes.ravel():
         if xlabelsize is not None:
@@ -1885,6 +2144,7 @@ def boxplot_frame_groupby(grouped, subplots=True, column=None, fontsize=None,
 
     Parameters
     ----------
+    grouped : Grouped DataFrame
     subplots :
         * ``False`` - no subplots will be used
         * ``True`` - create a subplot for each group
@@ -1892,6 +2152,8 @@ def boxplot_frame_groupby(grouped, subplots=True, column=None, fontsize=None,
         Can be any valid input to groupby
     fontsize : int or string
     rot : label rotation angle
+    grid : Setting this to True will show the grid
+    figsize : A tuple (width, height) in inches
     kwds : other plotting keyword arguments to be passed to matplotlib boxplot
            function
 
@@ -1959,8 +2221,11 @@ def _grouped_plot(plotf, data, column=None, by=None, numeric_only=True,
         grouped = grouped[column]
 
     ngroups = len(grouped)
-
     nrows, ncols = layout or _get_layout(ngroups)
+
+    if nrows * ncols < ngroups:
+        raise ValueError("Number of plots in 'layout' must greater than or "
+                         "equal to the number " "of groups in 'by'")
 
     if figsize is None:
         # our favorite default beating matplotlib's idea of the
@@ -2086,14 +2351,18 @@ def _subplots(nrows=1, ncols=1, sharex=False, sharey=False, squeeze=True,
       Dict with keywords passed to the add_subplot() call used to create each
       subplots.
 
-    fig_kw : dict
-      Dict with keywords passed to the figure() call.  Note that all keywords
-      not recognized above will be automatically included here.
-
-    ax : Matplotlib axis object, default None
+    ax : Matplotlib axis object, optional
 
     secondary_y : boolean or sequence of ints, default False
         If True then y-axis will be on the right
+
+    data : DataFrame, optional
+        If secondary_y is a sequence, data is used to select columns.
+
+    fig_kw : Other keyword arguments to be passed to the figure() call.
+        Note that all keywords not recognized above will be
+        automatically included here.
+
 
     Returns:
 
@@ -2202,7 +2471,6 @@ def _subplots(nrows=1, ncols=1, sharex=False, sharey=False, squeeze=True,
 
 
 def _get_xlim(lines):
-    import pandas.tseries.converter as conv
     left, right = np.inf, -np.inf
     for l in lines:
         x = l.get_xdata()

@@ -7,7 +7,8 @@ import numpy as np
 import pandas.lib as lib
 import pandas.tslib as tslib
 import pandas.core.common as com
-from pandas.util.py3compat import StringIO
+from pandas.compat import StringIO, callable
+import pandas.compat as compat
 
 try:
     import dateutil
@@ -20,7 +21,7 @@ try:
         raise Exception('dateutil 2.0 incompatible with Python 2.x, you must '
                         'install version 1.5 or 2.1+!')
 except ImportError:  # pragma: no cover
-    print 'Please install python-dateutil via easy_install or some method!'
+    print('Please install python-dateutil via easy_install or some method!')
     raise  # otherwise a 2nd import won't show the message
 
 
@@ -28,7 +29,9 @@ def _infer_tzinfo(start, end):
     def _infer(a, b):
         tz = a.tzinfo
         if b and b.tzinfo:
-            assert(tslib.get_timezone(tz) == tslib.get_timezone(b.tzinfo))
+            if not (tslib.get_timezone(tz) == tslib.get_timezone(b.tzinfo)):
+                raise AssertionError('Inputs must both have the same timezone,'
+                                     ' {0} != {1}'.format(tz, b.tzinfo))
         return tz
     tz = None
     if start is not None:
@@ -39,7 +42,7 @@ def _infer_tzinfo(start, end):
 
 
 def _maybe_get_tz(tz):
-    if isinstance(tz, basestring):
+    if isinstance(tz, compat.string_types):
         import pytz
         tz = pytz.timezone(tz)
     if com.is_integer(tz):
@@ -49,7 +52,7 @@ def _maybe_get_tz(tz):
 
 
 def to_datetime(arg, errors='ignore', dayfirst=False, utc=None, box=True,
-                format=None):
+                format=None, coerce=False, unit='ns'):
     """
     Convert argument to datetime
 
@@ -58,30 +61,67 @@ def to_datetime(arg, errors='ignore', dayfirst=False, utc=None, box=True,
     arg : string, datetime, array of strings (with possible NAs)
     errors : {'ignore', 'raise'}, default 'ignore'
         Errors are ignored by default (values left untouched)
+    dayfirst : boolean, default False
+        If True parses dates with the day first, eg 20/01/2005
+        Warning: dayfirst=True is not strict, but will prefer to parse
+        with day first (this is a known bug).
     utc : boolean, default None
         Return UTC DatetimeIndex if True (converting any tz-aware
         datetime.datetime objects as well)
+    box : boolean, default True
+        If True returns a DatetimeIndex, if False returns ndarray of values
+    format : string, default None
+        strftime to parse time, eg "%d/%m/%Y"
+    coerce : force errors to NaT (False by default)
+    unit : unit of the arg (D,s,ms,us,ns) denote the unit in epoch
+        (e.g. a unix timestamp), which is an integer/float number
 
     Returns
     -------
     ret : datetime if parsing succeeded
     """
+    from pandas import Timestamp
     from pandas.core.series import Series
     from pandas.tseries.index import DatetimeIndex
 
-    def _convert_f(arg):
-        arg = com._ensure_object(arg)
+    def _convert_listlike(arg, box):
 
+        if isinstance(arg, (list,tuple)):
+            arg = np.array(arg, dtype='O')
+
+        if com.is_datetime64_ns_dtype(arg):
+            if box and not isinstance(arg, DatetimeIndex):
+                try:
+                    return DatetimeIndex(arg, tz='utc' if utc else None)
+                except ValueError:
+                    pass
+
+            return arg
+
+        arg = com._ensure_object(arg)
         try:
             if format is not None:
-                result = tslib.array_strptime(arg, format)
+                result = None
+
+                # shortcut formatting here
+                if format == '%Y%m%d':
+                    try:
+                        result = _attempt_YYYYMMDD(arg)
+                    except:
+                        raise ValueError("cannot convert the input to '%Y%m%d' date format")
+
+                # fallback
+                if result is None:
+                    result = tslib.array_strptime(arg, format, coerce=coerce)
             else:
                 result = tslib.array_to_datetime(arg, raise_=errors == 'raise',
-                                                 utc=utc, dayfirst=dayfirst)
+                                                 utc=utc, dayfirst=dayfirst,
+                                                 coerce=coerce, unit=unit)
             if com.is_datetime64_dtype(result) and box:
                 result = DatetimeIndex(result, tz='utc' if utc else None)
             return result
-        except ValueError, e:
+
+        except ValueError as e:
             try:
                 values, tz = tslib.datetime_to_datetime64(arg)
                 return DatetimeIndex._simple_new(values, None, tz=tz)
@@ -90,49 +130,56 @@ def to_datetime(arg, errors='ignore', dayfirst=False, utc=None, box=True,
 
     if arg is None:
         return arg
-    elif isinstance(arg, datetime):
+    elif isinstance(arg, Timestamp):
         return arg
     elif isinstance(arg, Series):
-        values = arg.values
-        if not com.is_datetime64_dtype(values):
-            values = _convert_f(values)
+        values = _convert_listlike(arg.values, box=False)
         return Series(values, index=arg.index, name=arg.name)
-    elif isinstance(arg, (np.ndarray, list)):
-        if isinstance(arg, list):
-            arg = np.array(arg, dtype='O')
+    elif com.is_list_like(arg):
+        return _convert_listlike(arg, box=box)
 
-        if com.is_datetime64_dtype(arg):
-            if box and not isinstance(arg, DatetimeIndex):
-                try:
-                    return DatetimeIndex(arg, tz='utc' if utc else None)
-                except ValueError, e:
-                    try:
-                        values, tz = tslib.datetime_to_datetime64(arg)
-                        return DatetimeIndex._simple_new(values, None, tz=tz)
-                    except (ValueError, TypeError):
-                        raise e
-            return arg
-
-        try:
-            return _convert_f(arg)
-        except ValueError:
-            raise
-        return arg
-
-    try:
-        if not arg:
-            return arg
-        default = datetime(1, 1, 1)
-        return parse(arg, dayfirst=dayfirst, default=default)
-    except Exception:
-        if errors == 'raise':
-            raise
-        return arg
-
+    return _convert_listlike(np.array([ arg ]), box=box)[0]
 
 class DateParseError(ValueError):
     pass
 
+def _attempt_YYYYMMDD(arg):
+    """ try to parse the YYYYMMDD/%Y%m%d format, try to deal with NaT-like,
+        arg is a passed in as an object dtype, but could really be ints/strings with nan-like/or floats (e.g. with nan) """
+
+    def calc(carg):
+        # calculate the actual result
+        carg = carg.astype(object)
+        return lib.try_parse_year_month_day(carg/10000,carg/100 % 100, carg % 100)
+
+    def calc_with_mask(carg,mask):
+        result = np.empty(carg.shape, dtype='M8[ns]')
+        iresult = result.view('i8')
+        iresult[-mask] = tslib.iNaT
+        result[mask] = calc(carg[mask].astype(np.float64).astype(np.int64)).astype('M8[ns]')
+        return result
+
+    # try intlike / strings that are ints
+    try:
+        return calc(arg.astype(np.int64))
+    except:
+        pass
+
+    # a float with actual np.nan
+    try:
+        carg = arg.astype(np.float64)
+        return calc_with_mask(carg,com.notnull(carg))
+    except:
+        pass
+
+    # string with NaN-like
+    try:
+        mask = ~lib.ismember(arg, tslib._nat_strings)
+        return calc_with_mask(arg,mask)
+    except:
+        pass
+
+    return None
 
 # patterns for quarters like '4Q2005', '05Q1'
 qpat1full = re.compile(r'(\d)Q(\d\d\d\d)')
@@ -150,7 +197,7 @@ def parse_time_string(arg, freq=None, dayfirst=None, yearfirst=None):
 
     Parameters
     ----------
-    arg : basestring
+    arg : compat.string_types
     freq : str or DateOffset, default None
         Helps with interpreting time string if supplied
     dayfirst : bool, default None
@@ -167,7 +214,7 @@ def parse_time_string(arg, freq=None, dayfirst=None, yearfirst=None):
     from pandas.tseries.frequencies import (_get_rule_month, _month_numbers,
                                             _get_freq_str)
 
-    if not isinstance(arg, basestring):
+    if not isinstance(arg, compat.string_types):
         return arg
 
     arg = arg.upper()
@@ -238,7 +285,8 @@ def parse_time_string(arg, freq=None, dayfirst=None, yearfirst=None):
     try:
         parsed, reso = dateutil_parse(arg, default, dayfirst=dayfirst,
                                       yearfirst=yearfirst)
-    except Exception, e:
+    except Exception as e:
+        # TODO: allow raise of errors within instead
         raise DateParseError(e)
 
     if parsed is None:
@@ -253,19 +301,25 @@ def dateutil_parse(timestr, default,
     """ lifted from dateutil to get resolution"""
     from dateutil import tz
     import time
+    fobj = StringIO(str(timestr))
 
-    res = DEFAULTPARSER._parse(StringIO(timestr), **kwargs)
+    res = DEFAULTPARSER._parse(fobj, **kwargs)
 
     if res is None:
         raise ValueError("unknown string format")
 
     repl = {}
+    reso = None
     for attr in ["year", "month", "day", "hour",
                  "minute", "second", "microsecond"]:
         value = getattr(res, attr)
         if value is not None:
             repl[attr] = value
             reso = attr
+
+    if reso is None:
+        raise ValueError("Cannot parse date.")
+
     if reso == 'microsecond' and repl['microsecond'] == 0:
         reso = 'second'
 
@@ -280,7 +334,7 @@ def dateutil_parse(timestr, default,
                 tzdata = tzinfos.get(res.tzname)
             if isinstance(tzdata, datetime.tzinfo):
                 tzinfo = tzdata
-            elif isinstance(tzdata, basestring):
+            elif isinstance(tzdata, compat.string_types):
                 tzinfo = tz.tzstr(tzdata)
             elif isinstance(tzdata, int):
                 tzinfo = tz.tzoffset(res.tzname, tzdata)
@@ -343,6 +397,6 @@ def ole2datetime(oledt):
     # Excel has a bug where it thinks the date 2/29/1900 exists
     # we just reject any date before 3/1/1900.
     if val < 61:
-        raise Exception("Value is outside of acceptable range: %s " % val)
+        raise ValueError("Value is outside of acceptable range: %s " % val)
 
     return OLE_TIME_ZERO + timedelta(days=val)

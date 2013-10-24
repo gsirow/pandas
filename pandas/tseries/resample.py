@@ -9,6 +9,7 @@ from pandas.tseries.offsets import DateOffset, Tick, _delta_to_nanoseconds
 from pandas.tseries.period import PeriodIndex, period_range
 import pandas.tseries.tools as tools
 import pandas.core.common as com
+import pandas.compat as compat
 
 from pandas.lib import Timestamp
 import pandas.lib as lib
@@ -85,7 +86,7 @@ class TimeGrouper(CustomGrouper):
             offset = to_offset(self.freq)
             if offset.n > 1:
                 if self.kind == 'period':  # pragma: no cover
-                    print 'Warning: multiple of frequency -> timestamps'
+                    print('Warning: multiple of frequency -> timestamps')
                 # Cannot have multiple of periods, convert to timestamp
                 self.kind = 'timestamp'
 
@@ -119,7 +120,9 @@ class TimeGrouper(CustomGrouper):
         return binner, grouper
 
     def _get_time_bins(self, axis):
-        assert(isinstance(axis, DatetimeIndex))
+        if not isinstance(axis, DatetimeIndex):
+            raise TypeError('axis must be a DatetimeIndex, but got '
+                            'an instance of %r' % type(axis).__name__)
 
         if len(axis) == 0:
             binner = labels = DatetimeIndex(data=[], freq=self.freq)
@@ -178,9 +181,11 @@ class TimeGrouper(CustomGrouper):
         return binner, bin_edges
 
     def _get_time_period_bins(self, axis):
-        assert(isinstance(axis, DatetimeIndex))
+        if not isinstance(axis, DatetimeIndex):
+            raise TypeError('axis must be a DatetimeIndex, but got '
+                            'an instance of %r' % type(axis).__name__)
 
-        if len(axis) == 0:
+        if not len(axis):
             binner = labels = PeriodIndex(data=[], freq=self.freq)
             return binner, [], labels
 
@@ -208,7 +213,8 @@ class TimeGrouper(CustomGrouper):
                 result = grouped.aggregate(self._agg_method)
             else:
                 # upsampling shortcut
-                assert(self.axis == 0)
+                if self.axis:
+                    raise AssertionError('axis must be 0')
 
                 if self.closed == 'right':
                     res_index = binner[1:]
@@ -227,7 +233,7 @@ class TimeGrouper(CustomGrouper):
                                        limit=self.limit)
 
         loffset = self.loffset
-        if isinstance(loffset, basestring):
+        if isinstance(loffset, compat.string_types):
             loffset = to_offset(self.loffset)
 
         if isinstance(loffset, (DateOffset, timedelta)):
@@ -274,7 +280,6 @@ class TimeGrouper(CustomGrouper):
 
 def _take_new_index(obj, indexer, new_index, axis=0):
     from pandas.core.api import Series, DataFrame
-    from pandas.core.internals import BlockManager
 
     if isinstance(obj, Series):
         new_values = com.take_1d(obj.values, indexer)
@@ -282,19 +287,13 @@ def _take_new_index(obj, indexer, new_index, axis=0):
     elif isinstance(obj, DataFrame):
         if axis == 1:
             raise NotImplementedError
-        data = obj._data
-
-        new_blocks = [b.take(indexer, axis=1) for b in data.blocks]
-        new_axes = list(data.axes)
-        new_axes[1] = new_index
-        new_data = BlockManager(new_blocks, new_axes)
-        return DataFrame(new_data)
+        return DataFrame(obj._data.take(indexer, new_index=new_index, axis=1))
     else:
         raise NotImplementedError
 
 
 def _get_range_edges(axis, offset, closed='left', base=0):
-    if isinstance(offset, basestring):
+    if isinstance(offset, compat.string_types):
         offset = to_offset(offset)
 
     if isinstance(offset, Tick):

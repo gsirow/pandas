@@ -2,9 +2,10 @@ import unittest
 
 from numpy import nan
 import numpy as np
-from pandas import Index, isnull
+from pandas import Index, isnull, Timestamp
 from pandas.util.testing import assert_almost_equal
 import pandas.util.testing as common
+from pandas.compat import range, lrange, zip
 import pandas.lib as lib
 import pandas.algos as algos
 from datetime import datetime
@@ -30,7 +31,7 @@ class TestTseriesUtil(unittest.TestCase):
 
     def test_backfill(self):
         old = Index([1, 5, 10])
-        new = Index(range(12))
+        new = Index(lrange(12))
 
         filler = algos.backfill_int64(old, new)
 
@@ -39,7 +40,7 @@ class TestTseriesUtil(unittest.TestCase):
 
         # corner case
         old = Index([1, 4])
-        new = Index(range(5, 10))
+        new = Index(lrange(5, 10))
         filler = algos.backfill_int64(old, new)
 
         expect_filler = [-1, -1, -1, -1, -1]
@@ -47,7 +48,7 @@ class TestTseriesUtil(unittest.TestCase):
 
     def test_pad(self):
         old = Index([1, 5, 10])
-        new = Index(range(12))
+        new = Index(lrange(12))
 
         filler = algos.pad_int64(old, new)
 
@@ -56,7 +57,7 @@ class TestTseriesUtil(unittest.TestCase):
 
         # corner case
         old = Index([5, 10])
-        new = Index(range(5))
+        new = Index(lrange(5))
         filler = algos.pad_int64(old, new)
         expect_filler = [-1, -1, -1, -1, -1]
         self.assert_(np.array_equal(filler, expect_filler))
@@ -526,7 +527,7 @@ def test_group_ohlc():
         bins = np.array([6, 12], dtype=np.int64)
         out = np.zeros((3, 4), dtype)
         counts = np.zeros(len(out), dtype=np.int64)
-        
+
         func = getattr(algos,'group_ohlc_%s' % dtype)
         func(out, counts, obj[:, None], bins)
 
@@ -564,9 +565,9 @@ class TestTypeInference(unittest.TestCase):
 
     def test_length_zero(self):
         result = lib.infer_dtype(np.array([], dtype='i4'))
-        self.assertEqual(result, 'empty')
+        self.assertEqual(result, 'integer')
 
-        result = lib.infer_dtype(np.array([], dtype='O'))
+        result = lib.infer_dtype([])
         self.assertEqual(result, 'empty')
 
     def test_integers(self):
@@ -682,6 +683,32 @@ class TestReducer(unittest.TestCase):
                             dummy=dummy, labels=Index(np.arange(100)))
         expected = arr.sum(1)
         assert_almost_equal(result, expected)
+
+
+class TestTsUtil(unittest.TestCase):
+    def test_min_valid(self):
+        # Ensure that Timestamp.min is a valid Timestamp
+        Timestamp(Timestamp.min)
+
+    def test_max_valid(self):
+        # Ensure that Timestamp.max is a valid Timestamp
+        Timestamp(Timestamp.max)
+
+    def test_to_datetime_bijective(self):
+        # Ensure that converting to datetime and back only loses precision
+        # by going from nanoseconds to microseconds.
+        self.assertEqual(Timestamp(Timestamp.max.to_pydatetime()).value/1000, Timestamp.max.value/1000)
+        self.assertEqual(Timestamp(Timestamp.min.to_pydatetime()).value/1000, Timestamp.min.value/1000)
+
+class TestPeriodField(unittest.TestCase):
+
+    def test_get_period_field_raises_on_out_of_range(self):
+        from pandas import tslib
+        self.assertRaises(ValueError, tslib.get_period_field, -1, 0, 0)
+
+    def test_get_period_field_array_raises_on_out_of_range(self):
+        from pandas import tslib
+        self.assertRaises(ValueError, tslib.get_period_field_arr, -1, np.empty(1), 0)
 
 if __name__ == '__main__':
     import nose

@@ -4,12 +4,13 @@ Ordinary least squares regression
 
 # pylint: disable-msg=W0201
 
-from itertools import izip, starmap
-from StringIO import StringIO
-
+from pandas.compat import zip, range, StringIO
+from itertools import starmap
+from pandas import compat
 import numpy as np
 
 from pandas.core.api import DataFrame, Series, isnull
+from pandas.core.base import StringMixin
 from pandas.core.common import _ensure_float64
 from pandas.core.index import MultiIndex
 from pandas.core.panel import Panel
@@ -22,18 +23,25 @@ import pandas.stats.moments as moments
 _FP_ERR = 1e-8
 
 
-class OLS(object):
+class OLS(StringMixin):
     """
     Runs a full sample ordinary least squares regression.
 
     Parameters
     ----------
-    y: Series
-    x: Series, DataFrame, dict of Series
-    intercept: bool
+    y : Series
+    x : Series, DataFrame, dict of Series
+    intercept : bool
         True if you want an intercept.
-    nw_lags: None or int
+    weights : array-like, optional
+        1d array of weights.  If you supply 1/W then the variables are pre-
+        multiplied by 1/sqrt(W).  If no weights are supplied the default value
+        is 1 and WLS reults are the same as OLS.
+    nw_lags : None or int
         Number of Newey-West lags.
+    nw_overlap : boolean, default False
+        Assume data is overlapping when computing Newey-West estimator
+
     """
     _panel_model = False
 
@@ -57,14 +65,14 @@ class OLS(object):
         if self._weights is not None:
             self._x_trans = self._x.mul(np.sqrt(self._weights), axis=0)
             self._y_trans = self._y * np.sqrt(self._weights)
-            self.sm_ols = sm.WLS(self._y.values,
-                                 self._x.values,
+            self.sm_ols = sm.WLS(self._y.get_values(),
+                                 self._x.get_values(),
                                  weights=self._weights.values).fit()
         else:
             self._x_trans = self._x
             self._y_trans = self._y
-            self.sm_ols = sm.OLS(self._y.values,
-                                 self._x.values).fit()
+            self.sm_ols = sm.OLS(self._y.get_values(),
+                                 self._x.get_values()).fit()
 
     def _prepare_data(self):
         """
@@ -88,6 +96,9 @@ class OLS(object):
         if self._intercept:
             filt_rhs['intercept'] = 1.
             pre_filt_rhs['intercept'] = 1.
+
+        if hasattr(filt_weights,'to_dense'):
+            filt_weights = filt_weights.to_dense()
 
         return (filt_lhs, filt_rhs, filt_weights,
                 pre_filt_rhs, index, valid)
@@ -574,7 +585,7 @@ Degrees of Freedom: model %(df_model)d, resid %(df_resid)d
 
         return template % params
 
-    def __repr__(self):
+    def __unicode__(self):
         return self.summary
 
     @cache_readonly
@@ -593,16 +604,24 @@ class MovingOLS(OLS):
 
     Parameters
     ----------
-    y: Series
-    x: Series, DataFrame, or dict of Series
-    intercept: bool
-        True if you want an intercept.
-    nw_lags: None or int
-        Number of Newey-West lags.
-    window_type: {'full sample', 'rolling', 'expanding'}
+    y : Series
+    x : Series, DataFrame, or dict of Series
+    weights : array-like, optional
+        1d array of weights.  If None, equivalent to an unweighted OLS.
+    window_type : {'full sample', 'rolling', 'expanding'}
         Default expanding
-    window: int
+    window : int
         size of window (for rolling/expanding OLS)
+    min_periods : int
+        Threshold of non-null data points to require.
+        If None, defaults to size of window.
+    intercept : bool
+        True if you want an intercept.
+    nw_lags : None or int
+        Number of Newey-West lags.
+    nw_overlap : boolean, default False
+        Assume data is overlapping when computing Newey-West estimator
+
     """
     def __init__(self, y, x, weights=None, window_type='expanding',
                  window=None, min_periods=None, intercept=True,
@@ -619,7 +638,8 @@ class MovingOLS(OLS):
         self._window_type = scom._get_window_type(window_type)
 
         if self._is_rolling:
-            assert(window is not None)
+            if window is None:
+                raise AssertionError("Must specify window.")
             if min_periods is None:
                 min_periods = window
         else:
@@ -726,7 +746,7 @@ class MovingOLS(OLS):
         """Returns the covariance of beta."""
         result = {}
         result_index = self._result_index
-        for i in xrange(len(self._var_beta_raw)):
+        for i in range(len(self._var_beta_raw)):
             dm = DataFrame(self._var_beta_raw[i], columns=self.beta.columns,
                            index=self.beta.columns)
             result[result_index[i]] = dm
@@ -786,7 +806,7 @@ class MovingOLS(OLS):
         cum_xx = self._cum_xx(x)
         cum_xy = self._cum_xy(x, y)
 
-        for i in xrange(N):
+        for i in range(N):
             if not valid[i] or not enough[i]:
                 continue
 
@@ -931,7 +951,7 @@ class MovingOLS(OLS):
                 return Fst, (q, d), 1 - f.cdf(Fst, q, d)
 
             # Compute the P-value for each pair
-            result = starmap(get_result_simple, izip(F, df_resid))
+            result = starmap(get_result_simple, zip(F, df_resid))
 
             return list(result)
 
@@ -951,7 +971,7 @@ class MovingOLS(OLS):
             return math.calc_F(R, r, beta, vcov, n, d)
 
         results = starmap(get_result,
-                          izip(self._beta_raw, self._var_beta_raw, nobs, df))
+                          zip(self._beta_raw, self._var_beta_raw, nobs, df))
 
         return list(results)
 
@@ -961,7 +981,7 @@ class MovingOLS(OLS):
         from scipy.stats import t
 
         result = [2 * t.sf(a, b)
-                  for a, b in izip(np.fabs(self._t_stat_raw),
+                  for a, b in zip(np.fabs(self._t_stat_raw),
                                    self._df_resid_raw)]
 
         return np.array(result)
@@ -1045,7 +1065,7 @@ class MovingOLS(OLS):
     def _std_err_raw(self):
         """Returns the raw standard err values."""
         results = []
-        for i in xrange(len(self._var_beta_raw)):
+        for i in range(len(self._var_beta_raw)):
             results.append(np.sqrt(np.diag(self._var_beta_raw[i])))
 
         return np.array(results)
@@ -1196,7 +1216,9 @@ class MovingOLS(OLS):
         return result.astype(int)
 
     def _beta_matrix(self, lag=0):
-        assert(lag >= 0)
+        if lag < 0:
+            raise AssertionError("'lag' must be greater than or equal to 0, "
+                                 "input was {0}".format(lag))
 
         betas = self._beta_raw
 
@@ -1233,7 +1255,7 @@ def _safe_update(d, other):
     """
     Combine dictionaries with non-overlapping keys
     """
-    for k, v in other.iteritems():
+    for k, v in compat.iteritems(other):
         if k in d:
             raise Exception('Duplicate regressor: %s' % k)
 
@@ -1246,10 +1268,12 @@ def _filter_data(lhs, rhs, weights=None):
 
     Parameters
     ----------
-    lhs: Series
+    lhs : Series
         Dependent variable in the regression.
-    rhs: dict, whose values are Series, DataFrame, or dict
+    rhs : dict, whose values are Series, DataFrame, or dict
         Explanatory variables of the regression.
+    weights : array-like, optional
+        1d array of weights.  If None, equivalent to an unweighted OLS.
 
     Returns
     -------
@@ -1257,7 +1281,8 @@ def _filter_data(lhs, rhs, weights=None):
         Cleaned lhs and rhs
     """
     if not isinstance(lhs, Series):
-        assert(len(lhs) == len(rhs))
+        if len(lhs) != len(rhs):
+            raise AssertionError("length of lhs must equal length of rhs")
         lhs = Series(lhs, index=rhs.index)
 
     rhs = _combine_rhs(rhs)
@@ -1280,8 +1305,11 @@ def _filter_data(lhs, rhs, weights=None):
     filt_lhs = combined.pop('__y__')
     filt_rhs = combined
 
-    return (filt_lhs, filt_rhs, filt_weights,
-            pre_filt_rhs, index, valid)
+    if hasattr(filt_weights,'to_dense'):
+        filt_weights = filt_weights.to_dense()
+
+    return (filt_lhs.to_dense(), filt_rhs.to_dense(), filt_weights,
+            pre_filt_rhs.to_dense(), index, valid)
 
 
 def _combine_rhs(rhs):
@@ -1296,7 +1324,7 @@ def _combine_rhs(rhs):
     elif isinstance(rhs, DataFrame):
         series = rhs.copy()
     elif isinstance(rhs, dict):
-        for name, value in rhs.iteritems():
+        for name, value in compat.iteritems(rhs):
             if isinstance(value, Series):
                 _safe_update(series, {name: value})
             elif isinstance(value, (dict, DataFrame)):
