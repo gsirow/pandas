@@ -423,6 +423,7 @@ frequency increment. Specific offset logic like "month", "business day", or
     LastWeekOfMonth, "the x-th day of the last week of each month"
     MonthEnd, "calendar month end"
     MonthBegin, "calendar month begin"
+    DayOfMonth, "the x-th day of the each month"
     BMonthEnd, "business month end"
     BMonthBegin, "business month begin"
     QuarterEnd, "calendar quarter end"

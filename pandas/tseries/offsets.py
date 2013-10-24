@@ -886,7 +886,15 @@ class LastWeekOfMonth(CacheableOffset, DateOffset):
 
 
 class DayOfMonth(CacheableOffset, DateOffset):
-    """DateOffset of one month on a given day"""
+    """
+    Describes monthly dates like "the 15th of each month"
+
+    Parameters
+    ----------
+    n : int
+    day : {0, 1, ..., 31}
+        day of month
+    """
     _prefix = 'DOM'
     
     def __init__(self, n=1, **kwds):
